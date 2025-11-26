@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyse des Prix - Cloisons (≥35€/m²)</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f9fafb;
+            color: #1f2937;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 24px;
+            color: #1f2937;
+            margin-bottom: 8px;
+        }
+        .header p {
+            color: #6b7280;
+            font-size: 14px;
+        }
+        .filter-badge {
+            display: inline-block;
+            background-color: #fef3c7;
+            color: #92400e;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            margin-top: 10px;
+        }
+        .filters {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .filter-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        .filter-group select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            border-radius: 12px;
+            padding: 20px;
+            color: white;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .stat-card.blue { background: #3b82f6; }
+        .stat-card.purple { background: #8b5cf6; }
+        .stat-card.green { background: #22c55e; }
+        .stat-card.red { background: #ef4444; }
+        .stat-card.orange { background: #f97316; }
+        .stat-card .icon {
+            font-size: 24px;
+            margin-bottom: 8px;
+        }
+        .stat-card .label {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-bottom: 4px;
+        }
+        .stat-card .value {
+            font-size: 22px;
+            font-weight: bold;
+        }
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .card h2 {
+            font-size: 18px;
+            color: #1f2937;
+            margin-bottom: 20px;
+        }
+        .chart-container {
+            position: relative;
+            height: 300px;
+        }
+        .chart-container-small {
+            position: relative;
+            height: 250px;
+        }
+        .tip-box {
+            background: #ecfdf5;
+            border: 1px solid #a7f3d0;
+            border-radius: 8px;
+            padding: 16px;
+            margin-top: 16px;
+            color: #065f46;
+        }
+        .tip-box strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+        .ranking-section {
+            margin-bottom: 24px;
+        }
+        .ranking-title {
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .ranking-title.green { color: #16a34a; }
+        .ranking-title.red { color: #dc2626; }
+        .ranking-item {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+        .ranking-item.green-bg { background: #f0fdf4; }
+        .ranking-item.red-bg { background: #fef2f2; }
+        .rank-badge {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .rank-badge.r1 { background: #22c55e; }
+        .rank-badge.r2 { background: #eab308; }
+        .rank-badge.r3 { background: #f97316; }
+        .ranking-info h4 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        .ranking-info p {
+            font-size: 13px;
+            color: #6b7280;
+        }
+        .recommendations {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        .recommendations h3 {
+            font-size: 15px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            color: #1f2937;
+        }
+        .recommendation-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 14px;
+            color: #4b5563;
+        }
+        .recommendation-item span {
+            font-size: 16px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+        }
+        th {
+            background: #f9fafb;
+            font-weight: 600;
+            color: #374151;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        td {
+            border-bottom: 1px solid #e5e7eb;
+        }
+        tr:nth-child(even) {
+            background: #f9fafb;
+        }
+        .text-right {
+            text-align: right;
+        }
+        .text-green { color: #16a34a; }
+        .text-red { color: #dc2626; }
+        .text-gray { color: #6b7280; }
+        .font-medium { font-weight: 500; }
+        tfoot tr {
+            background: #f3f4f6 !important;
+            font-weight: 600;
+        }
+        .footer {
+            text-align: center;
+            color: #9ca3af;
+            font-size: 13px;
+            padding: 20px 0;
+        }
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .filters {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>🇫🇷 Analyse Complète des Prix - Cloisons</h1>
+            <p>Tous les prix normalisés au m² pour une comparaison fiable</p>
+            <div class="filter-badge">⚠️ Filtre appliqué : Prix ≥ 35€/m² uniquement</div>
+        </div>
+
+        <!-- Filtres -->
+        <div class="filters">
+            <div class="filter-group">
+                <label>Grande Famille</label>
+                <select id="filterFamille" onchange="updateStats()">
+                    <option value="all">Toutes les familles</option>
+                    <option value="Autres">Autres</option>
+                    <option value="Cloisons Acoustiques">Cloisons Acoustiques</option>
+                    <option value="Cloisons Placostil">Cloisons Placostil</option>
+                    <option value="Cloisons Standard">Cloisons Standard</option>
+                    <option value="Contre-cloisons">Contre-cloisons</option>
+                    <option value="Doublages">Doublages</option>
+                    <option value="Encoffrements">Encoffrements</option>
+                    <option value="Gaines Techniques">Gaines Techniques</option>
+                    <option value="Habillages">Habillages</option>
+                    <option value="Plafonds">Plafonds</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label>Année</label>
+                <select id="filterAnnee" onchange="updateStats()">
+                    <option value="all">Toutes les années</option>
+                    <option value="2018">2018</option>
+                    <option value="2019">2019</option>
+                    <option value="2020">2020</option>
+                    <option value="2021">2021</option>
+                    <option value="2022">2022</option>
+                    <option value="2023">2023</option>
+                    <option value="2024">2024</option>
+                    <option value="2025">2025</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div class="stats-grid">
+            <div class="stat-card blue">
+                <div class="icon">💰</div>
+                <div class="label">Valeur totale</div>
+                <div class="value" id="statValeur">24 166 619€</div>
+            </div>
+            <div class="stat-card purple">
+                <div class="icon">📈</div>
+                <div class="label">Prix moyen</div>
+                <div class="value" id="statMoyen">71.03€/m²</div>
+            </div>
+            <div class="stat-card green">
+                <div class="icon">📉</div>
+                <div class="label">Prix min</div>
+                <div class="value" id="statMin">35.00€/m²</div>
+            </div>
+            <div class="stat-card red">
+                <div class="icon">⚠️</div>
+                <div class="label">Prix max</div>
+                <div class="value" id="statMax">494.00€/m²</div>
+            </div>
+            <div class="stat-card orange">
+                <div class="icon">📦</div>
+                <div class="label">Articles</div>
+                <div class="value" id="statArticles">1 009</div>
+            </div>
+        </div>
+
+        <!-- Graphique par catégorie -->
+        <div class="card">
+            <h2>📊 Comparaison par Grande Famille (Prix au m²)</h2>
+            <div class="chart-container">
+                <canvas id="chartCategories"></canvas>
+            </div>
+        </div>
+
+        <!-- Graphique par saison -->
+        <div class="card">
+            <h2>🍂 Prix moyen par Saison</h2>
+            <div class="chart-container-small">
+                <canvas id="chartSaisons"></canvas>
+            </div>
+            <div class="tip-box">
+                <strong>💡 Meilleure saison pour acheter : Automne</strong>
+                Prix moyen : 61.89€/m²
+            </div>
+        </div>
+
+        <!-- Graphique évolution annuelle -->
+        <div class="card">
+            <h2>📅 Évolution des prix par Année</h2>
+            <div class="chart-container-small">
+                <canvas id="chartAnnees"></canvas>
+            </div>
+        </div>
+
+        <!-- Synthèse Globale -->
+        <div class="card">
+            <h2>📋 Synthèse Globale</h2>
+            
+            <div class="ranking-section">
+                <div class="ranking-title green">🎯 Familles les plus économiques</div>
+                <div class="ranking-item green-bg">
+                    <div class="rank-badge r1">1</div>
+                    <div class="ranking-info">
+                        <h4>Cloisons Placostil</h4>
+                        <p>54.23€/m² (Volume: 5 352m²)</p>
+                    </div>
+                </div>
+                <div class="ranking-item green-bg">
+                    <div class="rank-badge r2">2</div>
+                    <div class="ranking-info">
+                        <h4>Habillages</h4>
+                        <p>58.92€/m² (Volume: 11 535m²)</p>
+                    </div>
+                </div>
+                <div class="ranking-item green-bg">
+                    <div class="rank-badge r3">3</div>
+                    <div class="ranking-info">
+                        <h4>Doublages</h4>
+                        <p>59.50€/m² (Volume: 52 548m²)</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="ranking-section">
+                <div class="ranking-title red">⚠️ Familles les plus coûteuses</div>
+                <div class="ranking-item red-bg">
+                    <div class="rank-badge r1" style="background:#dc2626">1</div>
+                    <div class="ranking-info">
+                        <h4>Gaines Techniques</h4>
+                        <p>99.26€/m² (Volume: 12 810m²)</p>
+                    </div>
+                </div>
+                <div class="ranking-item red-bg">
+                    <div class="rank-badge r2">2</div>
+                    <div class="ranking-info">
+                        <h4>Cloisons Acoustiques</h4>
+                        <p>75.03€/m² (Volume: 59 488m²)</p>
+                    </div>
+                </div>
+                <div class="ranking-item red-bg">
+                    <div class="rank-badge r3">3</div>
+                    <div class="ranking-info">
+                        <h4>Autres</h4>
+                        <p>73.36€/m² (Volume: 46 793m²)</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="recommendations">
+                <h3>💡 Recommandations stratégiques</h3>
+                <div class="recommendation-item">
+                    <span>🕐</span>
+                    <div><strong>Meilleure période :</strong> Automne avec un prix moyen de 61.89€/m²</div>
+                </div>
+                <div class="recommendation-item">
+                    <span>📉</span>
+                    <div><strong>Tendance :</strong> Pic de prix en 2022 (93.13€/m²), retour à 67-74€/m² depuis</div>
+                </div>
+                <div class="recommendation-item">
+                    <span>💰</span>
+                    <div><strong>Économie potentielle :</strong> En choisissant les produits les moins chers de chaque famille, économie moyenne de 47%</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tableau détaillé -->
+        <div class="card">
+            <h2>📊 Tableau détaillé par famille</h2>
+            <div style="overflow-x: auto;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Famille</th>
+                            <th class="text-right">Prix Moyen (€/m²)</th>
+                            <th class="text-right">Prix Min (€/m²)</th>
+                            <th class="text-right">Prix Max (€/m²)</th>
+                            <th class="text-right">Volume (m²)</th>
+                            <th class="text-right">Nb Articles</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Gaines Techniques</td>
+                            <td class="text-right font-medium">99.26</td>
+                            <td class="text-right text-green">36.00</td>
+                            <td class="text-right text-red">161.87</td>
+                            <td class="text-right text-gray">12 810</td>
+                            <td class="text-right text-gray">66</td>
+                        </tr>
+                        <tr>
+                            <td>Cloisons Acoustiques</td>
+                            <td class="text-right font-medium">75.03</td>
+                            <td class="text-right text-green">35.10</td>
+                            <td class="text-right text-red">435.66</td>
+                            <td class="text-right text-gray">59 488</td>
+                            <td class="text-right text-gray">96</td>
+                        </tr>
+                        <tr>
+                            <td>Autres</td>
+                            <td class="text-right font-medium">73.36</td>
+                            <td class="text-right text-green">35.00</td>
+                            <td class="text-right text-red">320.14</td>
+                            <td class="text-right text-gray">46 793</td>
+                            <td class="text-right text-gray">123</td>
+                        </tr>
+                        <tr>
+                            <td>Encoffrements</td>
+                            <td class="text-right font-medium">73.12</td>
+                            <td class="text-right text-green">42.00</td>
+                            <td class="text-right text-red">155.00</td>
+                            <td class="text-right text-gray">2 835</td>
+                            <td class="text-right text-gray">16</td>
+                        </tr>
+                        <tr>
+                            <td>Cloisons Standard</td>
+                            <td class="text-right font-medium">70.34</td>
+                            <td class="text-right text-green">35.00</td>
+                            <td class="text-right text-red">494.00</td>
+                            <td class="text-right text-gray">113 564</td>
+                            <td class="text-right text-gray">378</td>
+                        </tr>
+                        <tr>
+                            <td>Contre-cloisons</td>
+                            <td class="text-right font-medium">69.35</td>
+                            <td class="text-right text-green">36.00</td>
+                            <td class="text-right text-red">283.50</td>
+                            <td class="text-right text-gray">25 952</td>
+                            <td class="text-right text-gray">98</td>
+                        </tr>
+                        <tr>
+                            <td>Plafonds</td>
+                            <td class="text-right font-medium">66.83</td>
+                            <td class="text-right text-green">35.00</td>
+                            <td class="text-right text-red">270.00</td>
+                            <td class="text-right text-gray">35 771</td>
+                            <td class="text-right text-gray">84</td>
+                        </tr>
+                        <tr>
+                            <td>Doublages</td>
+                            <td class="text-right font-medium">59.50</td>
+                            <td class="text-right text-green">35.00</td>
+                            <td class="text-right text-red">172.00</td>
+                            <td class="text-right text-gray">52 548</td>
+                            <td class="text-right text-gray">107</td>
+                        </tr>
+                        <tr>
+                            <td>Habillages</td>
+                            <td class="text-right font-medium">58.92</td>
+                            <td class="text-right text-green">35.00</td>
+                            <td class="text-right text-red">137.40</td>
+                            <td class="text-right text-gray">11 535</td>
+                            <td class="text-right text-gray">28</td>
+                        </tr>
+                        <tr>
+                            <td>Cloisons Placostil</td>
+                            <td class="text-right font-medium">54.23</td>
+                            <td class="text-right text-green">36.00</td>
+                            <td class="text-right text-red">112.04</td>
+                            <td class="text-right text-gray">5 352</td>
+                            <td class="text-right text-gray">13</td>
+                        </tr>
+                    </tbody>
+                    <tfoot>
+                        <tr>
+                            <td><strong>TOTAL</strong></td>
+                            <td class="text-right"><strong>71.03</strong></td>
+                            <td class="text-right text-green"><strong>35.00</strong></td>
+                            <td class="text-right text-red"><strong>494.00</strong></td>
+                            <td class="text-right text-gray"><strong>366 648</strong></td>
+                            <td class="text-right text-gray"><strong>1 009</strong></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            Données issues de 1 009 articles (prix ≥ 35€/m²) • 2018 - 2025 • Volume total : 366 648 m²
+        </div>
+    </div>
+
+    <script>
+        // Données
+        const data = {
+            stats_globales: {"valeur_totale": 24166619.43, "prix_moyen": 71.03, "prix_min": 35.0, "prix_max": 494.0, "nb_articles": 1009},
+            stats_categories: {"Autres": {"valeur_totale": 3250555.19, "prix_moyen": 73.36, "prix_min": 35.0, "prix_max": 320.14, "nb_articles": 123}, "Cloisons Acoustiques": {"valeur_totale": 3902508.09, "prix_moyen": 75.03, "prix_min": 35.1, "prix_max": 435.66, "nb_articles": 96}, "Cloisons Placostil": {"valeur_totale": 277211.35, "prix_moyen": 54.23, "prix_min": 36.0, "prix_max": 112.04, "nb_articles": 13}, "Cloisons Standard": {"valeur_totale": 7316626.34, "prix_moyen": 70.34, "prix_min": 35.0, "prix_max": 494.0, "nb_articles": 378}, "Contre-cloisons": {"valeur_totale": 1551349.97, "prix_moyen": 69.35, "prix_min": 36.0, "prix_max": 283.5, "nb_articles": 98}, "Doublages": {"valeur_totale": 3171966.68, "prix_moyen": 59.5, "prix_min": 35.0, "prix_max": 172.0, "nb_articles": 107}, "Encoffrements": {"valeur_totale": 167537.51, "prix_moyen": 73.12, "prix_min": 42.0, "prix_max": 155.0, "nb_articles": 16}, "Gaines Techniques": {"valeur_totale": 846736.09, "prix_moyen": 99.26, "prix_min": 36.0, "prix_max": 161.87, "nb_articles": 66}, "Habillages": {"valeur_totale": 682632.64, "prix_moyen": 58.92, "prix_min": 35.0, "prix_max": 137.4, "nb_articles": 28}, "Plafonds": {"valeur_totale": 2999495.57, "prix_moyen": 66.83, "prix_min": 35.0, "prix_max": 270.0, "nb_articles": 84}},
+            stats_annees: {"2018": {"valeur_totale": 193412.1, "prix_moyen": 43.33, "prix_min": 35.0, "prix_max": 58.0, "nb_articles": 9}, "2019": {"valeur_totale": 1513460.7, "prix_moyen": 49.69, "prix_min": 35.0, "prix_max": 85.0, "nb_articles": 63}, "2020": {"valeur_totale": 2659212.69, "prix_moyen": 68.71, "prix_min": 35.0, "prix_max": 494.0, "nb_articles": 114}, "2021": {"valeur_totale": 6160094.65, "prix_moyen": 67.74, "prix_min": 35.1, "prix_max": 292.8, "nb_articles": 260}, "2022": {"valeur_totale": 2709682.04, "prix_moyen": 93.13, "prix_min": 40.0, "prix_max": 274.0, "nb_articles": 141}, "2023": {"valeur_totale": 4395761.89, "prix_moyen": 73.8, "prix_min": 37.0, "prix_max": 320.0, "nb_articles": 128}, "2024": {"valeur_totale": 5739124.16, "prix_moyen": 67.22, "prix_min": 35.0, "prix_max": 435.66, "nb_articles": 272}, "2025": {"valeur_totale": 795871.2, "prix_moyen": 83.65, "prix_min": 35.0, "prix_max": 253.45, "nb_articles": 22}},
+            stats_saisons: {"Hiver": {"prix_moyen": 73.08}, "Printemps": {"prix_moyen": 75.62}, "Été": {"prix_moyen": 79.67}, "Automne": {"prix_moyen": 61.89}}
+        };
+
+        // Fonction pour mettre à jour les stats
+        function updateStats() {
+            const famille = document.getElementById('filterFamille').value;
+            const annee = document.getElementById('filterAnnee').value;
+            
+            let stats;
+            if (famille === 'all' && annee === 'all') {
+                stats = data.stats_globales;
+            } else if (famille !== 'all' && annee === 'all') {
+                stats = data.stats_categories[famille] || data.stats_globales;
+            } else if (famille === 'all' && annee !== 'all') {
+                stats = data.stats_annees[annee] || data.stats_globales;
+            } else {
+                stats = data.stats_globales;
+            }
+            
+            document.getElementById('statValeur').textContent = stats.valeur_totale.toLocaleString('fr-FR', {maximumFractionDigits: 0}) + '€';
+            document.getElementById('statMoyen').textContent = stats.prix_moyen.toFixed(2) + '€/m²';
+            document.getElementById('statMin').textContent = stats.prix_min.toFixed(2) + '€/m²';
+            document.getElementById('statMax').textContent = stats.prix_max.toFixed(2) + '€/m²';
+            document.getElementById('statArticles').textContent = stats.nb_articles.toLocaleString('fr-FR');
+        }
+
+        // Graphique par catégorie
+        const ctxCategories = document.getElementById('chartCategories').getContext('2d');
+        new Chart(ctxCategories, {
+            type: 'bar',
+            data: {
+                labels: ['Autres', 'Acoustiques', 'Placostil', 'Standard', 'Contre-clois.', 'Doublages', 'Encoffrem.', 'Gaines Tech.', 'Habillages', 'Plafonds'],
+                datasets: [
+                    {
+                        label: 'Prix moyen',
+                        data: [73.36, 75.03, 54.23, 70.34, 69.35, 59.50, 73.12, 99.26, 58.92, 66.83],
+                        backgroundColor: '#3b82f6'
+                    },
+                    {
+                        label: 'Prix min',
+                        data: [35.0, 35.1, 36.0, 35.0, 36.0, 35.0, 42.0, 36.0, 35.0, 35.0],
+                        backgroundColor: '#22c55e'
+                    },
+                    {
+                        label: 'Prix max',
+                        data: [320.14, 435.66, 112.04, 494.0, 283.5, 172.0, 155.0, 161.87, 137.4, 270.0],
+                        backgroundColor: '#ef4444'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Prix €/m²' }
+                    }
+                }
+            }
+        });
+
+        // Graphique par saison
+        const ctxSaisons = document.getElementById('chartSaisons').getContext('2d');
+        new Chart(ctxSaisons, {
+            type: 'bar',
+            data: {
+                labels: ['Hiver', 'Printemps', 'Été', 'Automne'],
+                datasets: [{
+                    label: 'Prix moyen',
+                    data: [73.08, 75.62, 79.67, 61.89],
+                    backgroundColor: '#8b5cf6',
+                    borderRadius: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Prix €/m²' }
+                    }
+                }
+            }
+        });
+
+        // Graphique évolution annuelle
+        const ctxAnnees = document.getElementById('chartAnnees').getContext('2d');
+        new Chart(ctxAnnees, {
+            type: 'line',
+            data: {
+                labels: ['2018', '2019', '2020', '2021', '2022', '2023', '2024', '2025'],
+                datasets: [{
+                    label: 'Prix moyen',
+                    data: [43.33, 49.69, 68.71, 67.74, 93.13, 73.80, 67.22, 83.65],
+                    borderColor: '#ec4899',
+                    backgroundColor: '#ec4899',
+                    tension: 0.3,
+                    pointRadius: 5,
+                    pointBackgroundColor: '#ec4899'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'bottom' }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Prix €/m²' }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+</html>
