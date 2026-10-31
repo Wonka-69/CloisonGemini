@@ -178,11 +178,29 @@
         <h3>Pourquoi ce labo ?</h3>
         <p>Babolat n'a jamais publié le protocole de son capteur. L'appli lit déjà ce qui est standard (batterie, modèle,
            version du firmware). Pour décoder les séances, il faut d'abord observer ce que la raquette envoie.
-           Ce labo enregistre chaque paquet reçu, met en évidence les octets qui changent et exporte une capture que l'on pourra analyser.</p>
+           Ce labo enregistre chaque paquet reçu, met en évidence les octets qui changent et exporte une capture que l'on pourra analyser.
+           Il gère le Bluetooth classique (port série, sur ordinateur) et le Bluetooth Low Energy.</p>
       </article>
 
       <article class="card">
-        <h3>Services supplémentaires</h3>
+        <h3>Bluetooth classique (port série) <span class="badge">recommandé</span></h3>
+        <p>Les indices (certification radio, compatibilité iPhone 4) montrent que la raquette utilise le <b>Bluetooth classique</b>,
+           que la connexion Bluetooth Low Energy ci-dessus ne peut pas voir. Chrome ou Edge <b>sur ordinateur</b> savent l'ouvrir comme un port série.</p>
+        <ol class="steps muted">
+          <li>Allume la raquette (bouton ON jusqu'au clignotement bleu), puis maintiens le bouton Bluetooth jusqu'au <b>clignotement violet</b>.</li>
+          <li>Sur l'ordinateur, jumelle la raquette dans les <b>réglages Bluetooth</b> du système.</li>
+          <li>Ici, appuie sur « Ouvrir le port série » et choisis la raquette.</li>
+        </ol>
+        <p id="serialUnsupported" class="small muted" hidden></p>
+        <div class="row wrap">
+          <button class="btn" id="btnSerial">Ouvrir le port série</button>
+          <button class="btn ghost" id="btnSerialClose" disabled>Fermer</button>
+        </div>
+        <p class="muted small">Ensuite, tout ce que la raquette envoie s'affiche dans le journal ci-dessous, et « Envoyer une commande » peut lui écrire.</p>
+      </article>
+
+      <article class="card">
+        <h3>Services supplémentaires (Bluetooth Low Energy)</h3>
         <p class="muted">Le navigateur n'autorise l'accès qu'aux services déclarés à l'avance. Si nRF Connect affiche un service propriétaire
           (UUID long), colle-le ici (un par ligne), puis reconnecte la raquette.</p>
         <textarea id="extraUuids" rows="3" placeholder="ex. 0000fff0-0000-1000-8000-00805f9b34fb"></textarea>
@@ -192,7 +210,7 @@
       <article class="card">
         <h3>Envoyer une commande</h3>
         <div class="row wrap">
-          <select id="writeChar" aria-label="Caractéristique cible"><option value="">Aucune caractéristique inscriptible</option></select>
+          <select id="writeChar" aria-label="Destination"><option value="">Aucune destination ouverte</option></select>
           <input id="writeHex" placeholder="octets en hexa, ex. 01 00 A5" spellcheck="false" autocomplete="off">
           <button class="btn" id="btnWrite" disabled>Envoyer</button>
         </div>

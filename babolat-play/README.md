@@ -88,11 +88,15 @@ Pour tester en local : `python3 -m http.server 8000` dans ce dossier, puis `http
 Colonnes CSV acceptées :
 `date, durationMin, activeMin, longestRally, forehand, backhand, serve, volley, smash, speed_forehand, speed_backhand, speed_serve, speed_volley, speed_smash, max_serve, sweetSpotPct, notes`
 
-## Bluetooth (expérimental)
+## Bluetooth (en cours d'étude)
 
-L'import USB suffit pour récupérer les séances. Le Bluetooth permettrait en plus une synchro sans câble,
-mais son protocole n'est pas connu (d'après le rapport d'homologation ITF de 2013, il est chiffré).
-L'onglet *Labo capteur* sert à l'étudier :
+L'import USB suffit pour récupérer les séances. Le Bluetooth permettrait en plus une synchro sans câble.
+**L'enquête en cours est dans [docs/BLUETOOTH.md](docs/BLUETOOTH.md)** : la raquette utilise très probablement le
+Bluetooth *classique* (port série), que Chrome ou Edge sur ordinateur savent ouvrir depuis
+*Labo capteur › Bluetooth classique*. Sur Mac, `tools/mac/racket-probe.swift` liste les services de la raquette
+et peut l'écouter.
+
+Pistes pour la partie Bluetooth Low Energy du Labo (au cas où un modèle l'utiliserait) :
 
 1. **Repérer les services** : installe *nRF Connect* (iOS/Android), allume la raquette et connecte-toi.
    Note les UUID des services « Unknown Service ». S'ils sont longs (128 bits), colle-les dans
@@ -121,6 +125,9 @@ js/app.js             logique de l'interface
 js/ble.js             connexion Web Bluetooth, découverte GATT, journal des paquets
 js/babolat-log.js     décodage des fichiers LOG*.BIN de la raquette (USB) et correction d'horloge
 js/protocol.js        Bluetooth : UUID connus, décodage standard, analyse de capture
+js/serial.js          Bluetooth classique (port série) via Web Serial
+docs/BLUETOOTH.md     enquête sur la synchro Bluetooth et plan
+tools/mac/            sonde Bluetooth classique pour macOS (Swift)
 js/store.js           modèle de séance, stockage, sauvegarde / restauration, import/export, démo
 js/db.js              accès IndexedDB (séances, réglages, fichiers bruts)
 js/charts.js          graphiques SVG sans dépendance

@@ -56,6 +56,11 @@ export class RacketConnection extends EventTarget {
     this._emit('status', { state, label });
   }
 
+  /** Journalisation partagée (utilisée aussi par le port série Bluetooth classique). */
+  log(dir, svc, chr, bytes) {
+    this._log(dir, svc, chr, bytes);
+  }
+
   _log(dir, svc, chr, bytes) {
     const pkt = { t: Date.now(), dir, svc, chr, hex: toHex(bytes) };
     this.capture.packets.push(pkt);

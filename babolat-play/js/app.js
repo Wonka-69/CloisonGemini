@@ -4,6 +4,7 @@ import {
 import { stackedBars, hBars, stacked100, impactMap, legend, hideTooltip, lineChart } from './charts.js';
 import { parseLog, calibrate, correctClock, toAppSession } from './babolat-log.js';
 import { RacketConnection, bluetoothSupport } from './ble.js';
+import { SerialLink, serialSupport } from './serial.js';
 import {
   shortUuid, fromHex, KNOWN_CHARS, runDecoders, analyzeCapture, asciiPreview, normalizeUuid,
 } from './protocol.js';
@@ -725,14 +726,44 @@ $('#importCapture').addEventListener('change', async (e) => {
 });
 $('#runDecoder').addEventListener('click', () => applyDecoder(racket.capture));
 
+// ---- Bluetooth classique (port série) ----
+const SERIAL_TARGET = '__serial__';
+const serial = new SerialLink((dir, svc, chr, bytes) => racket.log(dir, svc, chr, bytes));
+const serialOk = serialSupport();
+if (!serialOk.ok) {
+  $('#serialUnsupported').hidden = false;
+  $('#serialUnsupported').textContent = `Indisponible ici : ${serialOk.reason}`;
+  $('#btnSerial').disabled = true;
+}
+serial.addEventListener('status', ({ detail }) => {
+  $('#connBadge').dataset.state = detail.state;
+  $('#connLabel').textContent = detail.state === 'on' ? 'Raquette (port série)' : detail.label;
+  $('#btnSerial').disabled = detail.state !== 'off' || !serialOk.ok;
+  $('#btnSerialClose').disabled = detail.state !== 'on';
+  refreshWritable();
+});
+$('#btnSerial').addEventListener('click', async () => {
+  try {
+    if (await serial.connect()) {
+      racket.capture.device ??= { name: 'Raquette (Bluetooth classique)', id: 'serial' };
+      toast('Port série ouvert : fais quelques gestes ou envoie une commande');
+    }
+  } catch (e) {
+    toast(`Ouverture impossible : ${e.message}`, 6000);
+    serial.disconnect();
+  }
+});
+$('#btnSerialClose').addEventListener('click', () => serial.disconnect());
+
 function refreshWritable() {
   const sel = $('#writeChar');
   const list = racket.connected ? racket.writableChars() : [];
+  if (serial.connected) list.unshift({ id: SERIAL_TARGET, label: `${serial.label} — Bluetooth classique` });
   sel.replaceChildren();
   if (!list.length) {
     const o = document.createElement('option');
     o.value = '';
-    o.textContent = 'Aucune caractéristique inscriptible';
+    o.textContent = 'Aucune destination ouverte';
     sel.appendChild(o);
   }
   for (const c of list) {
@@ -747,7 +778,9 @@ $('#btnWrite').addEventListener('click', async () => {
   const bytes = fromHex($('#writeHex').value);
   if (!bytes) { toast('Saisis des octets hexadécimaux, ex. « 01 a5 ff »'); return; }
   try {
-    await racket.write($('#writeChar').value, bytes);
+    const target = $('#writeChar').value;
+    if (target === SERIAL_TARGET) await serial.write(bytes);
+    else await racket.write(target, bytes);
   } catch (e) {
     toast(`Envoi refusé : ${e.message}`);
   }
