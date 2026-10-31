@@ -14,6 +14,7 @@ export const SPINS = [
   { key: 'slice', label: 'Slicé', color: 'var(--s3)' },
 ];
 
+import { toAppSession } from './babolat-log.js';
 import { kvGet, kvSet, rawPut, rawHas, rawGetAll, rawCount, sha1Hex, toBase64, fromBase64 } from './db.js';
 
 // Anciennes clés localStorage (versions précédentes de l'appli) : migrées vers IndexedDB au démarrage.
@@ -71,6 +72,13 @@ export function normalizeSession(s) {
     impact: Array.isArray(s.impact) && s.impact.length === 9 ? s.impact.map((v) => num(v) || 0) : null,
     sweetSpotPct: num(s.sweetSpotPct),
     notes: typeof s.notes === 'string' ? s.notes : '',
+    // Contexte (saisi par le joueur)
+    type: typeof s.type === 'string' && s.type ? s.type : null,          // match | training | lesson | drill | free
+    surface: typeof s.surface === 'string' && s.surface ? s.surface : null, // hard | clay | grass | indoor
+    opponent: typeof s.opponent === 'string' ? s.opponent : '',
+    score: typeof s.score === 'string' ? s.score : '',
+    result: s.result === 'win' || s.result === 'loss' ? s.result : null,
+    feeling: num(s.feeling) != null ? Math.max(1, Math.min(5, num(s.feeling))) : null,
   };
   for (const { key } of STROKES) {
     out.strokes[key] = num(s.strokes?.[key]) || 0;
@@ -333,46 +341,61 @@ export function fromJson(text) {
 
 // ---------- données de démonstration ----------
 
-export function demoSessions(n = 14) {
+export function demoSessions(n = 16) {
   // Générateur pseudo-aléatoire déterministe pour une démo stable.
   let seed = 7;
   const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const ri = (a, b) => Math.round(a + rnd() * (b - a));
+  const rn = (m, sd) => m + sd * (rnd() + rnd() + rnd() - 1.5) * 2; // ≈ loi normale d'écart-type sd
+  const pick = (weights) => {
+    let r = rnd() * Object.values(weights).reduce((a, b) => a + b, 0);
+    for (const [k, w] of Object.entries(weights)) if ((r -= w) <= 0) return k;
+    return Object.keys(weights)[0];
+  };
+  const SPIN = { forehand: { topspin: 55, flat: 35, slice: 10 }, backhand: { topspin: 30, flat: 25, slice: 45 }, volley: { flat: 50, slice: 50 } };
+  const SPEED = { forehand: [56, 14], backhand: [48, 11], volley: [24, 8] };
   const out = [];
   const now = Date.now();
   for (let i = n - 1; i >= 0; i--) {
-    const d = new Date(now - i * ri(3, 5) * 86400000);
+    const d = new Date(now - (i * 3.5 + ri(0, 2)) * 86400000);
     d.setHours(ri(9, 19), ri(0, 1) * 30, 0, 0);
     const prog = (n - i) / n; // légère progression au fil du temps
-    const strokes = {
-      forehand: ri(140, 260),
-      backhand: ri(90, 190),
-      serve: ri(25, 70),
-      volley: ri(10, 50),
-      smash: 0,
-    };
-    const spinOf = (t) => {
-      const top = ri(35, 60), slice = ri(8, 25);
-      return { topspin: Math.round(t * top / 100), slice: Math.round(t * slice / 100), flat: t - Math.round(t * top / 100) - Math.round(t * slice / 100) };
-    };
-    out.push(normalizeSession({
-      id: `demo-${i}`,
-      source: 'demo',
-      date: d.toISOString(),
-      durationMin: ri(60, 105),
-      activeMin: ri(18, 34),
-      longestRally: ri(9, 26),
-      strokes,
-      speed: {
-        forehand: Math.round(ri(50, 60) + prog * 6),
-        backhand: Math.round(ri(44, 52) + prog * 6),
-        serve: Math.round(ri(98, 110) + prog * 8),
-        volley: ri(20, 28),
-      },
-      maxSpeed: { forehand: ri(85, 98), backhand: ri(68, 80), serve: Math.round(ri(124, 136) + prog * 6), volley: ri(45, 60) },
-      spin: { forehand: spinOf(strokes.forehand), backhand: spinOf(strokes.backhand), serve: spinOf(strokes.serve), volley: spinOf(strokes.volley) },
-      notes: 'Séance de démonstration',
-    }));
+    const type = pick({ match: 4, training: 4, lesson: 2 });
+    const durationS = ri(60, 100) * 60;
+    // Simulation point par point : services (1re / 2e balle) puis échange.
+    const swings = [];
+    let t = ri(30, 90);
+    while (t < durationS - 60) {
+      const fatigue = 1 - 0.12 * (t / durationS); // on frappe un peu moins fort en fin de séance
+      if (type === 'match' ? rnd() < 0.5 : rnd() < 0.15) {
+        const fault = rnd() < 0.42 - prog * 0.1;
+        swings.push({ t, stroke: 'serve', spin: rnd() < 0.7 ? 'flat' : 'topspin', speedKmh: Math.round(rn(148 + prog * 8, 10) * fatigue), glitch: false });
+        if (fault) {
+          t += ri(5, 10);
+          swings.push({ t, stroke: 'serve', spin: rnd() < 0.6 ? 'topspin' : 'flat', speedKmh: Math.round(rn(112 + prog * 6, 8) * fatigue), glitch: false });
+        }
+        t += ri(4, 7);
+      }
+      const len = type === 'match' ? Math.max(0, Math.round(-Math.log(rnd()) * 2.2)) : ri(2, 9);
+      for (let k = 0; k < len; k++) {
+        const stroke = pick({ forehand: 58, backhand: 35, volley: type === 'lesson' ? 12 : 5 });
+        const [m, sd] = SPEED[stroke];
+        swings.push({ t, stroke, spin: pick(SPIN[stroke]), speedKmh: Math.max(5, Math.round(rn(m + prog * 5, sd) * fatigue * 10) / 10), glitch: false });
+        t += ri(3, 6);
+      }
+      t += type === 'match' ? ri(15, 28) : ri(6, 14);
+    }
+    const sess = toAppSession({ id: `demo-${i}`, startedAt: d, durationS, swings, source: '' });
+    const ctx = { type, surface: pick({ hard: 6, clay: 3, indoor: 2 }), feeling: ri(2, 5) };
+    if (type === 'match') {
+      const win = rnd() < 0.35 + prog * 0.3;
+      Object.assign(ctx, {
+        opponent: ['Julien', 'Marc', 'Sophie', 'Karim', 'Léa'][ri(0, 4)],
+        result: win ? 'win' : 'loss',
+        score: win ? ['6-4 6-3', '7-5 6-4', '6-2 3-6 6-4'][ri(0, 2)] : ['4-6 3-6', '6-7 4-6', '2-6 6-3 4-6'][ri(0, 2)],
+      });
+    }
+    out.push(normalizeSession({ ...sess, ...ctx, id: `demo-${i}`, source: 'demo', notes: 'Séance de démonstration' }));
   }
   return out;
 }

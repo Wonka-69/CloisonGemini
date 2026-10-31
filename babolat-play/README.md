@@ -13,6 +13,10 @@ et garde l'historique **sur ton appareil uniquement** (aucun serveur, aucun comp
 | Vitesse moyenne et maximale par coup (balle au service, raquette sinon), effet lifté / plat / slicé | ✅ (valeurs déduites, voir plus bas) |
 | Correction de la date quand l'horloge de la raquette s'est réinitialisée (batterie vide) | ✅ |
 | Tableau de bord, évolution de la vitesse, détail de chaque séance par tranche de 5 minutes | ✅ |
+| **Analyses fines** à partir de l'heure de chaque coup : échanges, service (1re / 2e balle et % de 1res balles en match), endurance (début → fin de séance), régularité de la vitesse, vitesse selon l'effet | ✅ (estimations, voir plus bas) |
+| **Contexte des séances** : type (match, entraînement, cours, exercices, jeu libre), surface, adversaire, score, résultat, ressenti ; filtres par type et surface | ✅ |
+| **Comparaison match / hors match** et **points clés** (observations pour savoir quoi travailler) | ✅ |
+| **Progrès** : objectifs, records personnels, volume par semaine, série de semaines, bilan des matchs par surface | ✅ |
 | Archivage des fichiers bruts de la raquette et redécodage de tout l'historique | ✅ |
 | Sauvegarde complète en un clic, restauration sans doublons, rappels de sauvegarde et d'installation | ✅ |
 | Saisie manuelle, import JSON / CSV, export CSV, mode hors-ligne, thème clair et sombre | ✅ |
@@ -70,6 +74,20 @@ Pour tester en local : `python3 -m http.server 8000` dans ce dossier, puis `http
    Tu peux aussi ajouter une séance à la main, importer ou exporter en JSON / CSV.
 4. **Démo** : sur un tableau de bord vide, *Charger la démo* affiche des données fictives (supprimables).
 
+## Les analyses et leurs limites
+
+La raquette n'enregistre que **tes** frappes, avec leur heure, leur type, leur effet et leur vitesse.
+Elle ne voit ni les coups de l'adversaire, ni si la balle était bonne. Certaines analyses sont donc des **estimations** :
+
+- **Échanges** : un échange commence à chaque service ou après plus de 8 s sans frapper. On compte tes coups dans l'échange.
+- **1re / 2e balle** (séances de type *Match* uniquement) : deux services à moins de 12 s d'intervalle, sans coup entre les deux,
+  sont comptés comme une 1re balle faute suivie d'une 2e balle. Le pourcentage de 1res balles en découle.
+  À l'entraînement (paniers de services), cette règle ne s'applique pas : c'est pour ça qu'il faut préciser le type de séance.
+- **Endurance** : chaque séance est découpée en trois ; on compare la vitesse moyenne en coup droit et revers au début et à la fin.
+- **Régularité** : étendue de tes vitesses (de 10 % à 90 % de tes coups) et indice sur 100 (100 = toujours la même vitesse).
+
+Les seuils sont réunis en haut de `js/analysis.js` pour être ajustés facilement.
+
 ## Tes données : où elles sont et comment ne pas les perdre
 
 - Tout est stocké **sur l'appareil**, dans la base locale du navigateur (IndexedDB) : séances, réglages et
@@ -124,6 +142,7 @@ css/style.css         thème clair/sombre
 js/app.js             logique de l'interface
 js/ble.js             connexion Web Bluetooth, découverte GATT, journal des paquets
 js/babolat-log.js     décodage des fichiers LOG*.BIN de la raquette (USB) et correction d'horloge
+js/analysis.js        analyses : échanges, service, endurance, régularité, records, semaines, points clés
 js/protocol.js        Bluetooth : UUID connus, décodage standard, analyse de capture
 js/serial.js          Bluetooth classique (port série) via Web Serial
 docs/BLUETOOTH.md     enquête sur la synchro Bluetooth et plan

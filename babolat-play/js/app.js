@@ -1,7 +1,8 @@
 import {
   store, normalizeSession, totalStrokes, STROKES, SPINS, toCsv, fromCsv, demoSessions, buildBackup, restoreBackup,
 } from './store.js';
-import { stackedBars, hBars, stacked100, impactMap, legend, hideTooltip, lineChart } from './charts.js';
+import { stackedBars, hBars, stacked100, impactMap, legend, hideTooltip, lineChart, rangeBars } from './charts.js';
+import * as AN from './analysis.js';
 import { parseLog, calibrate, correctClock, toAppSession } from './babolat-log.js';
 import { RacketConnection, bluetoothSupport } from './ble.js';
 import { SerialLink, serialSupport } from './serial.js';
@@ -16,6 +17,10 @@ const fmtKmh = (n) => (n == null ? '–' : `${Math.round(n).toLocaleString('fr-F
 const fmtDate = (iso, opts = { day: 'numeric', month: 'short' }) => new Date(iso).toLocaleDateString('fr-FR', opts);
 const fmtDateTime = (iso) => new Date(iso).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 const SOURCE_LABEL = { manual: 'manuelle', import: 'importée', racket: 'raquette', demo: 'démo' };
+const TYPE_LABEL = Object.fromEntries(AN.SESSION_TYPES.map((t) => [t.key, t.label]));
+const SURFACE_LABEL = Object.fromEntries(AN.SURFACES.map((t) => [t.key, t.label]));
+const STROKE_LABEL = { forehand: 'Coup droit', backhand: 'Revers', serve: 'Service', volley: 'Volée', smash: 'Smash' };
+const STROKE_COLOR = { forehand: 'var(--s1)', backhand: 'var(--s2)', serve: 'var(--s3)', volley: 'var(--s4)', smash: 'var(--s5)' };
 
 function toast(msg, ms = 3200) {
   const t = $('#toast');
@@ -47,6 +52,7 @@ function showView(name) {
   for (const v of $$('.view')) v.toggleAttribute('data-active', v.id === `view-${name}`);
   hideTooltip();
   if (name === 'dashboard') renderDashboard();
+  if (name === 'progress') renderProgress();
   if (name === 'sessions') { renderSessions(); renderStorageInfo(); }
   try { sessionStorage.setItem('playtracker.view', name); } catch { /* sans importance */ }
 }
@@ -62,12 +68,32 @@ document.addEventListener('click', (e) => {
 let range = store.settings().range ?? 0;
 let tables = {};
 
+let typeFilter = store.settings().typeFilter || '';
+let surfaceFilter = store.settings().surfaceFilter || '';
 function filtered() {
-  const all = store.sessions();
-  if (!range) return all;
-  const from = Date.now() - range * 86400000;
-  return all.filter((s) => new Date(s.date).getTime() >= from);
+  let list = store.sessions();
+  if (range) {
+    const from = Date.now() - range * 86400000;
+    list = list.filter((s) => new Date(s.date).getTime() >= from);
+  }
+  if (typeFilter) list = list.filter((s) => (typeFilter === 'none' ? !s.type : s.type === typeFilter));
+  if (surfaceFilter) list = list.filter((s) => s.surface === surfaceFilter);
+  return list;
 }
+
+/** Petite statistique dans une carte. */
+function mini(label, value, unit = '', sub = '') {
+  const d = document.createElement('div');
+  d.className = 'mini';
+  const l = document.createElement('div'); l.className = 'label'; l.textContent = label;
+  const v = document.createElement('div'); v.className = 'value'; v.textContent = value;
+  if (unit) { const u = document.createElement('small'); u.textContent = unit; v.appendChild(u); }
+  d.append(l, v);
+  if (sub) { const s2 = document.createElement('div'); s2.className = 'sub'; s2.textContent = sub; d.appendChild(s2); }
+  return d;
+}
+const fmt1 = (v) => (v == null ? '–' : v.toLocaleString('fr-FR', { maximumFractionDigits: 1 }));
+const kmhOrDash = (v) => (v == null ? '–' : fmtInt(v));
 
 function avg(list) {
   const v = list.filter((x) => x != null);
@@ -205,7 +231,350 @@ function renderDashboard() {
     head: ['Coup', ...SPINS.map((s) => s.label)],
     rows: spinRows.map((r) => [r.label, ...SPINS.map((s) => r.values[s.key])]),
   };
+
+  renderAnalysis(list);
 }
+
+// ---------------------------------------------------------------------
+// Analyses fines (horodatage des coups) sur la période filtrée
+// ---------------------------------------------------------------------
+/** Moyenne pondérée par le nombre de coups de la vitesse d'un type de coup. */
+function weightedSpeed(list, key) {
+  let n = 0, sum = 0;
+  for (const s of list) if (s.speed[key] != null && s.strokes[key]) { n += s.strokes[key]; sum += s.speed[key] * s.strokes[key]; }
+  return n ? sum / n : null;
+}
+function spinPct(list, key, spin) {
+  let n = 0, all = 0;
+  for (const s of list) {
+    const x = s.spin?.[key];
+    if (!x) continue;
+    n += x[spin] || 0;
+    all += (x.topspin || 0) + (x.flat || 0) + (x.slice || 0);
+  }
+  return all ? Math.round((n / all) * 100) : null;
+}
+
+function renderAnalysis(list) {
+  const agg = AN.analyzeMany(list);
+  const matches = list.filter((s) => s.type === 'match');
+  const aggMatch = matches.some(AN.hasSwings) ? AN.analyzeMany(matches) : null;
+
+  // ---- tuile matchs ----
+  const decided = matches.filter((s) => s.result);
+  if (decided.length) {
+    const w = decided.filter((s) => s.result === 'win').length;
+    $('#tiles').appendChild(tile('Matchs', `${w} V · ${decided.length - w} D`, '', `${Math.round((w / decided.length) * 100)} % de victoires`));
+  }
+
+  // ---- points clés (1re / 2e balle estimées seulement sur les matchs) ----
+  const ins = AN.insights(list, agg ? { ...agg, serve: aggMatch?.serve || null } : null);
+  $('#insightsCard').hidden = !ins.length;
+  $('#insights').replaceChildren(...ins.map((i) => {
+    const li = document.createElement('li');
+    li.className = i.kind;
+    const b = document.createElement('b'); b.textContent = i.title;
+    const p = document.createElement('p'); p.textContent = i.text;
+    li.append(b, p);
+    return li;
+  }));
+
+  for (const id of ['#serveCard', '#rallyCard', '#enduranceCard', '#consistencyCard', '#spinSpeedCard']) $(id).hidden = !agg;
+  if (!agg) { $('#compareCard').hidden = true; return; }
+
+  // ---- service ----
+  const sv = agg.serve;
+  const ms = aggMatch?.serve;
+  $('#serveStats').replaceChildren(
+    mini('Services', sv ? fmtInt(sv.count) : '–'),
+    mini('Moyenne', kmhOrDash(sv?.avg), sv?.avg ? 'km/h' : ''),
+    mini('Le plus rapide', kmhOrDash(sv?.max), sv?.max ? 'km/h' : ''),
+    ...(ms ? [
+      mini('1re balle', kmhOrDash(ms.firstAvg), ms.firstAvg ? 'km/h' : '', 'moyenne en match'),
+      mini('2e balle', kmhOrDash(ms.secondAvg), ms.secondAvg ? 'km/h' : '', 'moyenne en match'),
+      mini('1res balles', ms.firstInPct == null ? '–' : `${ms.firstInPct}`, ms.firstInPct == null ? '' : '%', 'estimées bonnes'),
+    ] : []),
+  );
+  if (ms?.firstAvg && ms.secondAvg) {
+    hBars($('#chartServe'), [
+      { label: '1re balle', value: ms.firstAvg, color: 'var(--s3)', display: fmtKmh(ms.firstAvg), tipLabel: 'moyenne en match' },
+      { label: '2e balle', value: ms.secondAvg, color: 'var(--s3)', display: fmtKmh(ms.secondAvg), tipLabel: 'moyenne en match' },
+    ]);
+  } else $('#chartServe').replaceChildren();
+  $('#serveNote').textContent = ms
+    ? `1re / 2e balle et pourcentage estimés sur ${matches.length} match(s) : deux services à moins de 12 s d'intervalle, sans coup entre les deux, sont comptés comme une 1re balle faute suivie d'une 2e balle.`
+    : 'Indique « Match » comme type de séance (onglet Séances) pour estimer tes 1res et 2es balles et ton pourcentage de 1res balles.';
+  tables.serve = {
+    title: 'Service',
+    head: ['Mesure', 'Toutes séances', 'Matchs (estimé)'],
+    rows: [
+      ['Services', sv ? sv.count : '–', ms ? ms.count : '–'],
+      ['Vitesse moyenne (km/h)', kmhOrDash(sv?.avg), kmhOrDash(ms?.avg)],
+      ['Vitesse max (km/h)', kmhOrDash(sv?.max), kmhOrDash(ms?.max)],
+      ['Points servis', '–', ms ? ms.points : '–'],
+      ['1re balle moyenne (km/h)', '–', kmhOrDash(ms?.firstAvg)],
+      ['2e balle moyenne (km/h)', '–', kmhOrDash(ms?.secondAvg)],
+      ['1res balles bonnes', '–', ms?.firstInPct == null ? '–' : `${ms.firstInPct} %`],
+    ],
+  };
+
+  // ---- échanges ----
+  const rl = agg.rallies;
+  $('#rallyStats').replaceChildren(
+    mini('Échanges', fmtInt(rl.count)),
+    mini('Longueur moyenne', fmt1(rl.avg), 'coups'),
+    mini('Le plus long', fmtInt(rl.max), 'coups'),
+  );
+  const bucketLabels = { '1': '1 coup', '2-3': '2 à 3', '4-6': '4 à 6', '7+': '7 et plus' };
+  hBars($('#chartRallies'), Object.entries(rl.buckets).map(([k, v]) => ({
+    label: bucketLabels[k], value: v, color: 'var(--s1)', tipLabel: 'échanges',
+    display: `${fmtInt(v)} · ${Math.round((v / rl.count) * 100)} %`,
+  })));
+  tables.rallies = {
+    title: 'Échanges (estimés)',
+    head: ['Longueur (tes coups)', 'Échanges', 'Part'],
+    rows: Object.entries(rl.buckets).map(([k, v]) => [bucketLabels[k], v, `${Math.round((v / rl.count) * 100)} %`]),
+  };
+
+  // ---- endurance : moyenne des tiers de chaque séance ----
+  const segs = [[], [], []], rate = [[], [], []];
+  for (const s of list) {
+    const e = AN.analyzeSession(s)?.endurance;
+    if (!e) continue;
+    e.segments.forEach((g, i) => { if (g.groundKmh != null) segs[i].push(g.groundKmh); if (g.perMin != null) rate[i].push(g.perMin); });
+  }
+  const segAvg = segs.map(avg), rateAvg = rate.map(avg);
+  $('#enduranceCard').hidden = segAvg.every((v) => v == null);
+  if (segAvg[0] != null && segAvg[2] != null) {
+    const drop = Math.round(((segAvg[2] - segAvg[0]) / segAvg[0]) * 100);
+    $('#enduranceStats').replaceChildren(
+      mini('Vitesse début → fin', `${drop > 0 ? '+' : ''}${drop}`, '%', drop <= -8 ? 'baisse marquée' : drop < 0 ? 'légère baisse' : 'tu tiens le rythme'),
+      mini('Rythme au début', fmt1(rateAvg[0]), 'coups/min'),
+      mini('Rythme à la fin', fmt1(rateAvg[2]), 'coups/min'),
+    );
+    hBars($('#chartEndurance'), ['Début', 'Milieu', 'Fin'].map((label, i) => ({
+      label, value: segAvg[i] ?? 0, color: 'var(--s1)', display: fmtKmh(segAvg[i]), tipLabel: 'coup droit et revers',
+    })));
+  }
+  tables.endurance = {
+    title: 'Endurance',
+    head: ['Partie de séance', 'Vitesse CD + revers (km/h)', 'Coups par minute'],
+    rows: ['Début', 'Milieu', 'Fin'].map((l, i) => [l, kmhOrDash(segAvg[i]), fmt1(rateAvg[i])]),
+  };
+
+  // ---- régularité ----
+  const cons = ['forehand', 'backhand', 'serve'].filter((k) => agg.consistency[k]).map((k) => ({
+    key: k, label: STROKE_LABEL[k], color: STROKE_COLOR[k], ...agg.consistency[k],
+  }));
+  $('#consistencyCard').hidden = !cons.length;
+  if (cons.length) rangeBars($('#chartConsistency'), cons.map((c) => ({ ...c, note: `${c.score}/100`, tip: `indice de régularité ${c.score}/100` })));
+  tables.consistency = {
+    title: 'Régularité de la vitesse (km/h)',
+    head: ['Coup', 'Coups', '10 % les plus lents sous', 'Médiane', '10 % les plus rapides au-dessus', 'Indice /100'],
+    rows: cons.map((c) => [c.label, c.n, fmtInt(c.p10), fmtInt(c.p50), fmtInt(c.p90), c.score]),
+  };
+
+  // ---- match vs hors match ----
+  const others = list.filter((s) => s.type && s.type !== 'match');
+  $('#compareCard').hidden = !(matches.length && others.length);
+  if (matches.length && others.length) {
+    const group = (g) => {
+      const a = AN.analyzeMany(g);
+      const perMin = avg(g.map((s) => AN.analyzeSession(s)?.perMin).filter((v) => v != null));
+      return {
+        sessions: g.length,
+        strokes: avg(g.map(totalStrokes)),
+        perMin,
+        fh: weightedSpeed(g, 'forehand'),
+        bh: weightedSpeed(g, 'backhand'),
+        serve: weightedSpeed(g, 'serve'),
+        fhTop: spinPct(g, 'forehand', 'topspin'),
+        bhSlice: spinPct(g, 'backhand', 'slice'),
+        rally: a?.rallies?.avg ?? null,
+        feeling: avg(g.map((s) => s.feeling).filter((v) => v != null)),
+      };
+    };
+    const A = group(matches), B = group(others);
+    const rows = [
+      ['Séances', A.sessions, B.sessions, null],
+      ['Coups par séance', A.strokes, B.strokes, 0],
+      ['Coups par minute', A.perMin, B.perMin, 1],
+      ['Vitesse coup droit (km/h)', A.fh, B.fh, 0],
+      ['Vitesse revers (km/h)', A.bh, B.bh, 0],
+      ['Vitesse service (km/h)', A.serve, B.serve, 0],
+      ['Coups droits liftés (%)', A.fhTop, B.fhTop, 0],
+      ['Revers slicés (%)', A.bhSlice, B.bhSlice, 0],
+      ['Échange moyen (coups, estimé)', A.rally, B.rally, 1],
+      ['Ressenti moyen (/5)', A.feeling, B.feeling, 1],
+    ];
+    const table = document.createElement('table');
+    const hr = table.createTHead().insertRow();
+    for (const h of ['', 'Matchs', 'Hors match', 'Écart']) { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); }
+    const tb = table.createTBody();
+    for (const [label, a, b, digits] of rows) {
+      const r = tb.insertRow();
+      const f = (v) => (v == null ? '–' : digits == null ? fmtInt(v) : v.toLocaleString('fr-FR', { maximumFractionDigits: digits }));
+      r.insertCell().textContent = label;
+      r.insertCell().textContent = f(a);
+      r.insertCell().textContent = f(b);
+      const d = a != null && b != null && digits != null ? a - b : null;
+      r.insertCell().textContent = d == null ? '' : `${d > 0 ? '+' : ''}${d.toLocaleString('fr-FR', { maximumFractionDigits: digits })}`;
+    }
+    $('#compareTable').replaceChildren(table);
+  }
+
+  // ---- vitesse selon l'effet ----
+  const ss = agg.spinSpeed;
+  const keys = Object.keys(ss);
+  $('#spinSpeedCard').hidden = !keys.length;
+  if (keys.length) {
+    const table = document.createElement('table');
+    const hr = table.createTHead().insertRow();
+    for (const h of ['km/h moyen', 'Lifté', 'Plat', 'Slicé']) { const th = document.createElement('th'); th.textContent = h; hr.appendChild(th); }
+    const tb = table.createTBody();
+    for (const k of keys) {
+      const r = tb.insertRow();
+      r.insertCell().textContent = STROKE_LABEL[k];
+      for (const sp of ['topspin', 'flat', 'slice']) {
+        const c = ss[k][sp];
+        const cell = r.insertCell();
+        cell.textContent = c ? fmtInt(c.avg) : '–';
+        if (c) cell.title = `${c.n} coups`;
+      }
+    }
+    $('#spinSpeedTable').replaceChildren(table);
+  }
+}
+
+$('#typeFilter').value = typeFilter;
+$('#surfaceFilter').value = surfaceFilter;
+$('#typeFilter').addEventListener('change', (e) => { typeFilter = e.target.value; store.saveSettings({ typeFilter }); renderDashboard(); });
+$('#surfaceFilter').addEventListener('change', (e) => { surfaceFilter = e.target.value; store.saveSettings({ surfaceFilter }); renderDashboard(); });
+
+// =====================================================================
+// Progrès : objectifs, records, volume, matchs
+// =====================================================================
+function renderProgress() {
+  const all = store.sessions();
+  const real = all.filter((s) => s.source !== 'demo');
+  const list = real.length ? real : all; // la démo n'est utilisée que s'il n'y a rien d'autre
+  const st = store.settings();
+  const goals = { sessionsPerWeek: 2, serveKmh: null, ...(st.goals || {}) };
+  const weeks = AN.weekly(list, 12);
+  const thisWeek = weeks[weeks.length - 1];
+  const streak = AN.weekStreak(list);
+  const avgPerWeek = weeks.reduce((a, w) => a + w.sessions, 0) / weeks.length;
+
+  $('#progressTiles').replaceChildren(
+    tile('Série en cours', fmtInt(streak), streak > 1 ? 'semaines' : 'semaine', "semaines d'affilée avec au moins une séance"),
+    tile('Cette semaine', fmtInt(thisWeek.sessions), thisWeek.sessions > 1 ? 'séances' : 'séance', `objectif : ${goals.sessionsPerWeek}`),
+    tile('Moyenne', fmt1(avgPerWeek), 'séances / sem.', 'sur 12 semaines'),
+    tile('Temps de jeu', fmtInt(weeks.reduce((a, w) => a + w.minutes, 0) / 60), 'h', 'sur 12 semaines'),
+  );
+
+  // ---- objectifs ----
+  const goalRow = (label, value, target, unit) => {
+    const div = document.createElement('div');
+    div.className = 'goal';
+    const h = document.createElement('div'); h.className = 'goal-h';
+    const a = document.createElement('span'); a.textContent = label;
+    const b = document.createElement('b'); b.textContent = `${value == null ? '–' : fmtInt(value)} / ${fmtInt(target)} ${unit}`;
+    h.append(a, b);
+    const bar = document.createElement('div');
+    const pct = value == null ? 0 : Math.min(100, (value / target) * 100);
+    bar.className = `bar${pct >= 100 ? ' done' : ''}`;
+    bar.setAttribute('role', 'progressbar');
+    bar.setAttribute('aria-valuenow', String(Math.round(pct)));
+    const fill = document.createElement('span'); fill.style.width = `${pct}%`;
+    bar.appendChild(fill);
+    div.append(h, bar);
+    return div;
+  };
+  const rows = [goalRow('Séances cette semaine', thisWeek.sessions, goals.sessionsPerWeek, '')];
+  if (goals.serveKmh) {
+    const recent = list.filter((s) => Date.now() - new Date(s.date).getTime() < 30 * 86400000);
+    const best = Math.max(0, ...recent.map((s) => s.maxSpeed?.serve || 0)) || null;
+    rows.push(goalRow('Service le plus rapide (30 derniers jours)', best, goals.serveKmh, 'km/h'));
+  }
+  $('#goals').replaceChildren(...rows);
+  $('#goalSessions').value = goals.sessionsPerWeek;
+  $('#goalServe').value = goals.serveKmh ?? '';
+
+  // ---- records ----
+  const recs = AN.records(list);
+  $('#records').replaceChildren(...(recs.length ? recs.map((r) => {
+    const li = document.createElement('li');
+    li.tabIndex = 0;
+    const left = document.createElement('div');
+    const name = document.createElement('div'); name.textContent = r.label;
+    const date = document.createElement('div'); date.className = 'rd'; date.textContent = fmtDate(r.session.date, { day: 'numeric', month: 'long', year: 'numeric' });
+    left.append(name, date);
+    const v = document.createElement('span'); v.className = 'rv'; v.textContent = `${fmtInt(r.value)} ${r.unit}`;
+    li.append(left, v);
+    li.addEventListener('click', () => openDetail(r.session));
+    li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openDetail(r.session); });
+    return li;
+  }) : [Object.assign(document.createElement('li'), { textContent: 'Pas encore de record : importe tes séances.' })]));
+
+  // ---- volume par semaine ----
+  const wk = weeks.map((w) => ({
+    label: w.start.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' }),
+    title: `Semaine du ${w.start.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })} · ${w.sessions} séance(s), ${fmtInt(w.minutes)} min`,
+  }));
+  stackedBars($('#chartWeekly'), { categories: wk, series: [{ key: 'strokes', label: 'Coups', color: 'var(--s1)' }], values: weeks.map((w) => ({ strokes: w.strokes })) });
+  tables.weekly = {
+    title: 'Volume par semaine',
+    head: ['Semaine du', 'Séances', 'Minutes', 'Coups'],
+    rows: weeks.map((w) => [w.start.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' }), w.sessions, w.minutes, w.strokes]),
+  };
+
+  // ---- matchs ----
+  const matches = list.filter((s) => s.type === 'match').reverse();
+  $('#matchesCard').hidden = !matches.length;
+  if (matches.length) {
+    const decided = matches.filter((s) => s.result);
+    const w = decided.filter((s) => s.result === 'win').length;
+    const surf = {};
+    for (const s of decided) {
+      if (!s.surface) continue;
+      surf[s.surface] ??= { w: 0, n: 0 };
+      surf[s.surface].n++;
+      if (s.result === 'win') surf[s.surface].w++;
+    }
+    $('#matchStats').replaceChildren(
+      mini('Matchs', fmtInt(matches.length)),
+      mini('Victoires', fmtInt(w), '', decided.length ? `${Math.round((w / decided.length) * 100)} %` : ''),
+      mini('Défaites', fmtInt(decided.length - w)),
+      ...Object.entries(surf).map(([k, v]) => mini(SURFACE_LABEL[k], `${v.w}/${v.n}`, '', 'victoires')),
+    );
+    $('#matchList').replaceChildren(...matches.slice(0, 15).map((s) => {
+      const li = document.createElement('li');
+      li.tabIndex = 0;
+      const left = document.createElement('div');
+      const who = document.createElement('div'); who.textContent = s.opponent ? `contre ${s.opponent}` : 'Match';
+      const md = document.createElement('div'); md.className = 'md';
+      md.textContent = [fmtDate(s.date, { day: 'numeric', month: 'short', year: 'numeric' }), SURFACE_LABEL[s.surface]].filter(Boolean).join(' · ');
+      left.append(who, md);
+      const res = document.createElement('span');
+      res.className = s.result === 'win' ? 'res-win' : 'res-loss';
+      res.textContent = [s.result === 'win' ? 'Victoire' : s.result === 'loss' ? 'Défaite' : '', s.score].filter(Boolean).join(' ') || '—';
+      li.append(left, res);
+      li.addEventListener('click', () => openDetail(s));
+      li.addEventListener('keydown', (e) => { if (e.key === 'Enter') openDetail(s); });
+      return li;
+    }));
+  }
+}
+$('#goalSessions').addEventListener('change', (e) => {
+  const v = Math.max(1, Math.min(14, Number(e.target.value) || 2));
+  store.saveSettings({ goals: { ...(store.settings().goals || {}), sessionsPerWeek: v } });
+  renderProgress();
+});
+$('#goalServe').addEventListener('change', (e) => {
+  const v = Number(e.target.value);
+  store.saveSettings({ goals: { ...(store.settings().goals || {}), serveKmh: v >= 50 ? v : null } });
+  renderProgress();
+});
 
 $$('.filters .chip').forEach((c) => c.addEventListener('click', () => {
   range = Number(c.dataset.range);
@@ -267,6 +636,16 @@ function renderSessions() {
     badge.className = 'badge';
     badge.textContent = SOURCE_LABEL[s.source] || s.source;
     when.appendChild(badge);
+    const tb = document.createElement('span');
+    tb.className = s.type ? 'badge' : 'badge todo';
+    tb.textContent = s.type ? TYPE_LABEL[s.type] : 'type à préciser';
+    when.appendChild(tb);
+    if (s.type === 'match' && s.result) {
+      const rb = document.createElement('span');
+      rb.className = `badge ${s.result === 'win' ? 'res-win' : 'res-loss'}`;
+      rb.textContent = s.result === 'win' ? 'Victoire' : 'Défaite';
+      when.appendChild(rb);
+    }
     const actions = document.createElement('div');
     actions.className = 'actions';
     const edit = document.createElement('button');
@@ -311,10 +690,22 @@ function openSessionForm(s = null) {
       f[`v_${key}`].value = s.speed[key] ?? '';
     }
     f.notes.value = s.notes || '';
+    f.type.value = s.type || '';
+    f.surface.value = s.surface || '';
+    f.feeling.value = s.feeling ?? '';
+    f.result.value = s.result || '';
+    f.opponent.value = s.opponent || '';
+    f.score.value = s.score || '';
   }
+  toggleMatchFields();
   $('#sessionDialog').showModal();
 }
 $('#newSession').addEventListener('click', () => openSessionForm());
+function toggleMatchFields() {
+  const isMatch = $('#sessionForm').type.value === 'match';
+  for (const el of $$('#sessionForm .match-only')) el.hidden = !isMatch;
+}
+$('#sessionForm').type.addEventListener('change', toggleMatchFields);
 $('#sessionDialog').addEventListener('close', () => {
   if ($('#sessionDialog').returnValue !== 'save') return;
   const f = $('#sessionForm');
@@ -326,12 +717,19 @@ $('#sessionDialog').addEventListener('close', () => {
     activeMin: f.activeMin.value,
     longestRally: f.longestRally.value,
     notes: f.notes.value,
+    type: f.type.value,
+    surface: f.surface.value,
+    feeling: f.feeling.value,
+    result: f.type.value === 'match' ? f.result.value : null,
+    opponent: f.type.value === 'match' ? f.opponent.value : '',
+    score: f.type.value === 'match' ? f.score.value : '',
     strokes: Object.fromEntries(STROKES.map(({ key }) => [key, f[`s_${key}`].value])),
     speed: Object.fromEntries(STROKES.map(({ key }) => [key, f[`v_${key}`].value])),
   };
   store.upsert(normalizeSession(data));
   editing = null;
   renderSessions();
+  renderStorageInfo();
   toast('Séance enregistrée');
 });
 
@@ -381,6 +779,51 @@ function openDetail(s) {
       pct(sp?.topspin), pct(sp?.flat), pct(sp?.slice)].forEach((v) => { r.insertCell().textContent = v; });
   }
   $('#detailTable').replaceChildren(table);
+
+  // Contexte
+  const ctx = $('#detailContext');
+  ctx.replaceChildren();
+  const addBadge = (text, cls = 'badge') => { const b = document.createElement('span'); b.className = cls; b.textContent = text; ctx.appendChild(b); };
+  addBadge(s.type ? TYPE_LABEL[s.type] : 'type à préciser', s.type ? 'badge' : 'badge todo');
+  if (s.surface) addBadge(SURFACE_LABEL[s.surface]);
+  if (s.feeling) addBadge(`ressenti ${s.feeling}/5`);
+  if (s.type === 'match') {
+    const txt = [s.result === 'win' ? 'Victoire' : s.result === 'loss' ? 'Défaite' : null, s.score, s.opponent ? `contre ${s.opponent}` : null].filter(Boolean).join(' · ');
+    if (txt) ctx.appendChild(document.createTextNode(txt));
+  }
+  if (s.notes && s.source !== 'demo') {
+    const n = document.createElement('div'); n.className = 'muted small'; n.textContent = s.notes; ctx.appendChild(n);
+  }
+
+  // Analyses de la séance + comparaison avec ta moyenne
+  const box = $('#detailAnalysis');
+  box.replaceChildren();
+  const an = AN.analyzeSession(s);
+  if (an) {
+    const minis = document.createElement('div');
+    minis.className = 'minis';
+    const others = store.sessions().filter((x) => x.id !== s.id && (s.source === 'demo' || x.source !== 'demo'));
+    const delta = (key) => {
+      const ref = weightedSpeed(others, key);
+      if (ref == null || s.speed[key] == null) return '';
+      const d = Math.round(s.speed[key] - ref);
+      return `${d > 0 ? '+' : ''}${d} km/h vs ta moyenne`;
+    };
+    if (an.rallies) minis.append(mini('Échanges', fmtInt(an.rallies.count), '', `moy. ${fmt1(an.rallies.avg)} · max ${an.rallies.max} coups`));
+    if (an.perMin) minis.append(mini('Rythme', fmt1(an.perMin), 'coups/min'));
+    for (const k of ['forehand', 'backhand', 'serve']) if (s.speed[k] != null) minis.append(mini(STROKE_LABEL[k], fmtInt(s.speed[k]), 'km/h', delta(k)));
+    if (s.type === 'match' && an.serve?.points) {
+      minis.append(mini('1res balles', an.serve.firstInPct == null ? '–' : `${an.serve.firstInPct}`, '%', 'estimation'));
+      if (an.serve.secondAvg) minis.append(mini('2e balle', fmtInt(an.serve.secondAvg), 'km/h', `1re : ${fmtInt(an.serve.firstAvg)} km/h`));
+    }
+    if (an.endurance?.groundDropPct != null) {
+      const d = an.endurance.groundDropPct;
+      minis.append(mini('Vitesse début → fin', `${d > 0 ? '+' : ''}${d}`, '%', 'coup droit et revers'));
+    }
+    const h = document.createElement('h3'); h.className = 'mt'; h.textContent = 'Analyse de la séance';
+    box.append(h, minis);
+  }
+  $('#detailEdit').onclick = () => { $('#detailDialog').close(); openSessionForm(s); };
 
   // Chronologie par tranches de 5 minutes, à partir des coups horodatés.
   const swings = (s.swings || []).filter((w) => !w[4]);
@@ -439,6 +882,7 @@ async function importLogFiles(fileList) {
     archived ? `${archived} fichier(s) brut(s) archivé(s).` : '',
     r.short ? `${r.short} allumage(s) de moins de ${MIN_SWINGS} coups ignoré(s).` : '',
     r.undated ? `${r.undated} séance(s) en attente : l'horloge de la raquette doit être réglée.` : '',
+    r.added ? 'Pense à préciser le type de tes nouvelles séances (match, entraînement…) dans l\'onglet Séances : les statistiques seront plus précises.' : '',
     [...errors, ...r.errors].length ? `Erreurs : ${[...errors, ...r.errors].join(' ; ')}` : '',
   ].filter(Boolean).join(' ');
   if (r.added || r.updated) {

@@ -26,6 +26,7 @@
 
   <nav class="tabs" role="tablist">
     <button role="tab" data-view="dashboard" aria-selected="true">Tableau de bord</button>
+    <button role="tab" data-view="progress" aria-selected="false">Progrès</button>
     <button role="tab" data-view="sessions" aria-selected="false">Séances</button>
     <button role="tab" data-view="racket" aria-selected="false">Raquette</button>
     <button role="tab" data-view="lab" aria-selected="false">Labo capteur</button>
@@ -59,6 +60,22 @@
         <button class="chip" data-range="30">30 jours</button>
         <button class="chip" data-range="90">90 jours</button>
         <button class="chip" data-range="0" aria-pressed="true">Tout</button>
+        <select id="typeFilter" aria-label="Type de séance">
+          <option value="">Tous types</option>
+          <option value="match">Matchs</option>
+          <option value="training">Entraînements</option>
+          <option value="lesson">Cours</option>
+          <option value="drill">Exercices / panier</option>
+          <option value="free">Jeu libre</option>
+          <option value="none">Type non précisé</option>
+        </select>
+        <select id="surfaceFilter" aria-label="Surface">
+          <option value="">Toutes surfaces</option>
+          <option value="hard">Dur</option>
+          <option value="clay">Terre battue</option>
+          <option value="grass">Gazon</option>
+          <option value="indoor">Intérieur / moquette</option>
+        </select>
       </div>
 
       <div id="emptyState" class="card empty" hidden>
@@ -73,6 +90,12 @@
 
       <div id="dashContent">
         <div class="tiles" id="tiles"></div>
+
+        <article class="card" id="insightsCard">
+          <header class="card-h"><h3>Points clés</h3></header>
+          <p class="muted small">Observations tirées de tes séances sur la période choisie. Certaines reposent sur des estimations (voir chaque carte).</p>
+          <ul class="insights" id="insights"></ul>
+        </article>
 
         <div class="grid2">
           <article class="card">
@@ -94,6 +117,38 @@
             <div class="legend" id="legendTrend"></div>
             <div class="chart" id="chartTrend"></div>
           </article>
+          <article class="card" id="serveCard">
+            <header class="card-h"><h3>Service</h3><button class="link" data-table="serve">Tableau</button></header>
+            <div class="minis" id="serveStats"></div>
+            <div class="chart" id="chartServe"></div>
+            <p class="muted small" id="serveNote"></p>
+          </article>
+          <article class="card" id="rallyCard">
+            <header class="card-h"><h3>Échanges (estimés)</h3><button class="link" data-table="rallies">Tableau</button></header>
+            <div class="minis" id="rallyStats"></div>
+            <div class="chart" id="chartRallies"></div>
+            <p class="muted small">Coups de ton côté par échange. La raquette ne voit que tes frappes : un nouvel échange commence à chaque service ou après plus de 8 s sans frapper.</p>
+          </article>
+          <article class="card" id="enduranceCard">
+            <header class="card-h"><h3>Endurance</h3><button class="link" data-table="endurance">Tableau</button></header>
+            <div class="minis" id="enduranceStats"></div>
+            <div class="chart" id="chartEndurance"></div>
+            <p class="muted small">Vitesse moyenne en coup droit et revers au début, au milieu et à la fin de tes séances (chaque séance découpée en trois).</p>
+          </article>
+          <article class="card" id="consistencyCard">
+            <header class="card-h"><h3>Régularité de la vitesse</h3><button class="link" data-table="consistency">Tableau</button></header>
+            <div class="chart" id="chartConsistency"></div>
+            <p class="muted small">Le point est ta vitesse habituelle (médiane), la barre l'étendue où tombent 80 % de tes coups. Plus la barre est courte, plus ta frappe est constante.</p>
+          </article>
+          <article class="card span2" id="compareCard">
+            <header class="card-h"><h3>Match ou entraînement : quelle différence ?</h3></header>
+            <div class="table-wrap" id="compareTable"></div>
+            <p class="muted small">Indique le type de chaque séance (onglet Séances) pour alimenter cette comparaison.</p>
+          </article>
+          <article class="card span2" id="spinSpeedCard">
+            <header class="card-h"><h3>Vitesse selon l'effet</h3></header>
+            <div class="table-wrap" id="spinSpeedTable"></div>
+          </article>
           <article class="card" id="impactCard">
             <header class="card-h"><h3>Zone d'impact sur le tamis</h3><button class="link" data-table="impact">Tableau</button></header>
             <div class="chart chart-impact" id="chartImpact"></div>
@@ -104,6 +159,35 @@
             <div class="chart" id="chartSpin"></div>
           </article>
         </div>
+      </div>
+    </section>
+
+    <!-- ============ PROGRÈS ============ -->
+    <section id="view-progress" class="view">
+      <div class="tiles" id="progressTiles"></div>
+      <div class="grid2">
+        <article class="card">
+          <header class="card-h"><h3>Objectifs</h3></header>
+          <div id="goals"></div>
+          <div class="form-grid mt-s">
+            <label class="lbl-col">Séances par semaine<input type="number" id="goalSessions" min="1" max="14" step="1"></label>
+            <label class="lbl-col">Service visé (km/h)<input type="number" id="goalServe" min="50" max="250" step="1"></label>
+          </div>
+        </article>
+        <article class="card">
+          <header class="card-h"><h3>Records personnels</h3></header>
+          <ul class="records" id="records"></ul>
+        </article>
+        <article class="card span2">
+          <header class="card-h"><h3>Volume par semaine</h3><button class="link" data-table="weekly">Tableau</button></header>
+          <div class="chart" id="chartWeekly"></div>
+          <p class="muted small">Nombre de coups par semaine sur les 12 dernières semaines (touche une barre pour le détail).</p>
+        </article>
+        <article class="card span2" id="matchesCard">
+          <header class="card-h"><h3>Bilan des matchs</h3></header>
+          <div class="minis" id="matchStats"></div>
+          <ul class="match-list" id="matchList"></ul>
+        </article>
       </div>
     </section>
 
@@ -236,7 +320,50 @@
   <dialog id="sessionDialog">
     <form method="dialog" id="sessionForm">
       <h2 id="sessionFormTitle">Nouvelle séance</h2>
-      <div class="form-grid">
+      <fieldset>
+        <legend>Contexte</legend>
+        <div class="form-grid">
+          <label>Type
+            <select name="type">
+              <option value="">Non précisé</option>
+              <option value="match">Match</option>
+              <option value="training">Entraînement</option>
+              <option value="lesson">Cours</option>
+              <option value="drill">Exercices / panier</option>
+              <option value="free">Jeu libre</option>
+            </select>
+          </label>
+          <label>Surface
+            <select name="surface">
+              <option value="">Non précisée</option>
+              <option value="hard">Dur</option>
+              <option value="clay">Terre battue</option>
+              <option value="grass">Gazon</option>
+              <option value="indoor">Intérieur / moquette</option>
+            </select>
+          </label>
+          <label>Ressenti
+            <select name="feeling">
+              <option value="">—</option>
+              <option value="1">1 · très mauvais</option>
+              <option value="2">2 · moyen</option>
+              <option value="3">3 · correct</option>
+              <option value="4">4 · bon</option>
+              <option value="5">5 · excellent</option>
+            </select>
+          </label>
+          <label class="match-only">Résultat
+            <select name="result">
+              <option value="">—</option>
+              <option value="win">Victoire</option>
+              <option value="loss">Défaite</option>
+            </select>
+          </label>
+          <label class="match-only">Adversaire<input name="opponent" autocomplete="off"></label>
+          <label class="match-only">Score<input name="score" placeholder="ex. 6-4 3-6 7-5" autocomplete="off"></label>
+        </div>
+      </fieldset>
+      <div class="form-grid mt-s">
         <label>Date<input type="datetime-local" name="date" required></label>
         <label>Durée (min)<input type="number" name="durationMin" min="0" step="1" required></label>
         <label>Temps de jeu actif (min)<input type="number" name="activeMin" min="0" step="1"></label>
@@ -291,13 +418,18 @@
     <form method="dialog">
       <h2 id="detailTitle"></h2>
       <p class="muted" id="detailMeta"></p>
+      <p id="detailContext" class="detail-context"></p>
       <div class="table-wrap" id="detailTable"></div>
+      <div id="detailAnalysis"></div>
       <div id="detailTimelineBox">
         <h3 class="mt">Coups par tranche de 5 minutes</h3>
         <div class="legend" id="detailLegend"></div>
         <div class="chart" id="detailTimeline"></div>
       </div>
-      <div class="row end"><button class="btn">Fermer</button></div>
+      <div class="row end">
+        <button class="btn ghost" type="button" id="detailEdit">Modifier / préciser</button>
+        <button class="btn">Fermer</button>
+      </div>
     </form>
   </dialog>
 

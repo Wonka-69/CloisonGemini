@@ -311,3 +311,37 @@ export function lineChart(container, { categories, series, values, unit = '' }) 
     if (e.key === 'ArrowRight') { show(Math.min(n - 1, cur + 1)); e.preventDefault(); }
   });
 }
+
+/**
+ * Étendue des vitesses : une barre de p10 à p90 (80 % des coups) et un point sur la médiane.
+ * rows: [{ label, p10, p50, p90, color, note }]
+ */
+export function rangeBars(container, rows, { unit = ' km/h' } = {}) {
+  container.replaceChildren();
+  const rowH = 38, W = widthOf(container), labelW = 84, noteW = 64, m = { t: 4, b: 22 };
+  const H = rows.length * rowH + m.t + m.b;
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' }, container);
+  const max = niceMax(Math.max(...rows.map((r) => r.p90)));
+  const iw = W - labelW - noteW - 8;
+  const x = (v) => labelW + (v / max) * iw;
+  for (let k = 0; k <= 4; k++) {
+    const v = (max / 4) * k;
+    el('line', { x1: x(v), x2: x(v), y1: m.t, y2: H - m.b, class: k ? 'gridline' : 'baseline' }, svg);
+    text(svg, x(v), H - 6, Math.round(v).toLocaleString('fr-FR'), { 'text-anchor': 'middle' });
+  }
+  rows.forEach((r, i) => {
+    const y = m.t + i * rowH + rowH / 2;
+    const g = el('g', { class: 'mark' }, svg);
+    text(g, labelW - 10, y + 4, r.label, { 'text-anchor': 'end', class: 'lbl' });
+    const x0 = x(r.p10), x1 = x(r.p90);
+    el('rect', { x: x0, y: y - 6, width: Math.max(2, x1 - x0), height: 12, rx: 4, fill: r.color, opacity: 0.35 }, g);
+    el('circle', { cx: x(r.p50), cy: y, r: 6, fill: r.color, stroke: 'var(--surface)', 'stroke-width': 2 }, g);
+    if (r.note) text(g, W - noteW + 4, y + 4, r.note, { class: 'val' });
+    el('rect', { x: 0, y: y - rowH / 2, width: W, height: rowH, fill: 'transparent' }, g);
+    bindTooltip(g, r.label, [
+      { label: 'vitesse médiane', value: `${Math.round(r.p50)}${unit}`, color: r.color },
+      { label: '80 % des coups entre', value: `${Math.round(r.p10)} et ${Math.round(r.p90)}${unit}` },
+      ...(r.tip ? [{ label: '', value: r.tip }] : []),
+    ]);
+  });
+}
