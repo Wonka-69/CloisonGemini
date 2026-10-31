@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Play Tracker</title>
+  <meta name="description" content="Suivi des données du capteur Babolat Play : séances, coups, puissance, zone d'impact.">
+  <meta name="theme-color" content="#0d0d0d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Play Tracker">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><ellipse cx="16" cy="12" rx="9" ry="10.5" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M16 22.5v8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><path d="M10 8h12M9 12h14M10 16h12M13 3.5v17M16 1.5v21M19 3.5v17" stroke="currentColor" stroke-width=".9" opacity=".55"/></svg>
+      <span>Play Tracker</span>
+    </div>
+    <div class="conn" id="connBadge" data-state="off" title="État de la connexion Bluetooth">
+      <span class="dot"></span><span id="connLabel">Raquette déconnectée</span>
+    </div>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-view="dashboard" aria-selected="true">Tableau de bord</button>
+    <button role="tab" data-view="sessions" aria-selected="false">Séances</button>
+    <button role="tab" data-view="racket" aria-selected="false">Raquette</button>
+    <button role="tab" data-view="lab" aria-selected="false">Labo capteur</button>
+  </nav>
+
+  <main>
+    <!-- ============ TABLEAU DE BORD ============ -->
+    <section id="view-dashboard" class="view" data-active>
+      <div class="filters" role="group" aria-label="Période">
+        <button class="chip" data-range="7">7 jours</button>
+        <button class="chip" data-range="30">30 jours</button>
+        <button class="chip" data-range="90">90 jours</button>
+        <button class="chip" data-range="0" aria-pressed="true">Tout</button>
+      </div>
+
+      <div id="emptyState" class="card empty" hidden>
+        <h2>Aucune séance pour l'instant</h2>
+        <p>Connecte ta raquette depuis l'onglet <b>Raquette</b>, ajoute une séance à la main ou importe un fichier.
+           Tu peux aussi charger des données de démonstration pour voir à quoi ressemble le suivi.</p>
+        <div class="row">
+          <button class="btn" data-goto="sessions">Ajouter une séance</button>
+          <button class="btn ghost" id="loadDemo">Charger la démo</button>
+        </div>
+      </div>
+
+      <div id="dashContent">
+        <div class="tiles" id="tiles"></div>
+
+        <div class="grid2">
+          <article class="card">
+            <header class="card-h"><h3>Coups par séance</h3><button class="link" data-table="perSession">Tableau</button></header>
+            <div class="legend" id="legendPerSession"></div>
+            <div class="chart" id="chartPerSession"></div>
+          </article>
+          <article class="card">
+            <header class="card-h"><h3>Répartition des coups</h3><button class="link" data-table="byType">Tableau</button></header>
+            <div class="chart" id="chartByType"></div>
+          </article>
+          <article class="card">
+            <header class="card-h"><h3>Zone d'impact sur le tamis</h3><button class="link" data-table="impact">Tableau</button></header>
+            <div class="chart chart-impact" id="chartImpact"></div>
+          </article>
+          <article class="card">
+            <header class="card-h"><h3>Puissance moyenne par coup</h3><button class="link" data-table="power">Tableau</button></header>
+            <div class="chart" id="chartPower"></div>
+          </article>
+          <article class="card span2">
+            <header class="card-h"><h3>Effets (lifté / plat / slicé)</h3><button class="link" data-table="spin">Tableau</button></header>
+            <div class="legend" id="legendSpin"></div>
+            <div class="chart" id="chartSpin"></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SEANCES ============ -->
+    <section id="view-sessions" class="view">
+      <div class="row wrap">
+        <button class="btn" id="newSession">+ Nouvelle séance</button>
+        <label class="btn ghost file">Importer (JSON / CSV)<input type="file" id="importFile" accept=".json,.csv,application/json,text/csv" hidden></label>
+        <button class="btn ghost" id="exportJson">Exporter JSON</button>
+        <button class="btn ghost" id="exportCsv">Exporter CSV</button>
+      </div>
+      <div id="sessionList" class="list"></div>
+    </section>
+
+    <!-- ============ RAQUETTE ============ -->
+    <section id="view-racket" class="view">
+      <div id="bleUnsupported" class="card warn" hidden>
+        <h3>Bluetooth non disponible dans ce navigateur</h3>
+        <p id="bleUnsupportedMsg"></p>
+      </div>
+
+      <article class="card">
+        <h3>Connexion</h3>
+        <p class="muted">Allume la raquette (appui sur le bouton du manche, la LED s'allume), puis appuie sur « Rechercher ».
+           Choisis l'appareil dans la liste qui s'affiche.</p>
+        <div class="row wrap">
+          <button class="btn" id="btnScan">Rechercher la raquette</button>
+          <button class="btn ghost" id="btnDisconnect" disabled>Déconnecter</button>
+          <button class="btn ghost" id="btnSync" disabled>Synchroniser les séances</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>Informations de la raquette</h3>
+        <dl class="kv" id="deviceInfo"><dt>État</dt><dd>Non connectée</dd></dl>
+      </article>
+
+      <article class="card">
+        <h3>Services Bluetooth découverts</h3>
+        <div id="gattTree" class="gatt muted">Connecte la raquette pour lister ses services.</div>
+      </article>
+    </section>
+
+    <!-- ============ LABO ============ -->
+    <section id="view-lab" class="view">
+      <article class="card">
+        <h3>Pourquoi ce labo ?</h3>
+        <p>Babolat n'a jamais publié le protocole de son capteur. L'appli lit déjà ce qui est standard (batterie, modèle,
+           version du firmware). Pour décoder les séances, il faut d'abord observer ce que la raquette envoie.
+           Ce labo enregistre chaque paquet reçu, met en évidence les octets qui changent et exporte une capture que l'on pourra analyser.</p>
+      </article>
+
+      <article class="card">
+        <h3>Services supplémentaires</h3>
+        <p class="muted">Le navigateur n'autorise l'accès qu'aux services déclarés à l'avance. Si nRF Connect affiche un service propriétaire
+          (UUID long), colle-le ici (un par ligne), puis reconnecte la raquette.</p>
+        <textarea id="extraUuids" rows="3" placeholder="ex. 0000fff0-0000-1000-8000-00805f9b34fb"></textarea>
+        <div class="row"><button class="btn ghost" id="saveUuids">Enregistrer</button><span id="uuidMsg" class="muted"></span></div>
+      </article>
+
+      <article class="card">
+        <h3>Envoyer une commande</h3>
+        <div class="row wrap">
+          <select id="writeChar" aria-label="Caractéristique cible"><option value="">Aucune caractéristique inscriptible</option></select>
+          <input id="writeHex" placeholder="octets en hexa, ex. 01 00 A5" spellcheck="false" autocomplete="off">
+          <button class="btn" id="btnWrite" disabled>Envoyer</button>
+        </div>
+      </article>
+
+      <article class="card">
+        <header class="card-h">
+          <h3>Journal des paquets <span class="count" id="pktCount">0</span></h3>
+          <div class="row">
+            <button class="link" id="clearLog">Vider</button>
+            <button class="link" id="exportCapture">Exporter la capture</button>
+            <label class="link file">Ouvrir une capture<input type="file" id="importCapture" accept=".json" hidden></label>
+            <button class="link" id="runDecoder">Décoder</button>
+          </div>
+        </header>
+        <p class="muted small">Les octets <mark class="diff">surlignés</mark> ont changé par rapport au paquet précédent de la même caractéristique.</p>
+        <div class="log" id="packetLog" role="log" aria-live="polite"></div>
+      </article>
+    </section>
+  </main>
+
+  <!-- Formulaire séance -->
+  <dialog id="sessionDialog">
+    <form method="dialog" id="sessionForm">
+      <h2 id="sessionFormTitle">Nouvelle séance</h2>
+      <div class="form-grid">
+        <label>Date<input type="datetime-local" name="date" required></label>
+        <label>Durée (min)<input type="number" name="durationMin" min="0" step="1" required></label>
+        <label>Temps de jeu actif (min)<input type="number" name="activeMin" min="0" step="1"></label>
+        <label>Plus long échange (coups)<input type="number" name="longestRally" min="0" step="1"></label>
+      </div>
+      <fieldset>
+        <legend>Nombre de coups</legend>
+        <div class="form-grid four">
+          <label>Coup droit<input type="number" name="s_forehand" min="0" value="0"></label>
+          <label>Revers<input type="number" name="s_backhand" min="0" value="0"></label>
+          <label>Service<input type="number" name="s_serve" min="0" value="0"></label>
+          <label>Smash<input type="number" name="s_smash" min="0" value="0"></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Puissance moyenne (indice 0–100)</legend>
+        <div class="form-grid four">
+          <label>Coup droit<input type="number" name="p_forehand" min="0" max="100"></label>
+          <label>Revers<input type="number" name="p_backhand" min="0" max="100"></label>
+          <label>Service<input type="number" name="p_serve" min="0" max="100"></label>
+          <label>Smash<input type="number" name="p_smash" min="0" max="100"></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Centrage</legend>
+        <div class="form-grid">
+          <label>% de coups dans le sweet spot<input type="number" name="sweetSpotPct" min="0" max="100"></label>
+        </div>
+      </fieldset>
+      <label>Notes<textarea name="notes" rows="2"></textarea></label>
+      <div class="row end">
+        <button class="btn ghost" value="cancel" formnovalidate>Annuler</button>
+        <button class="btn" value="save">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Vue tableau des graphiques -->
+  <dialog id="tableDialog">
+    <form method="dialog">
+      <h2 id="tableTitle"></h2>
+      <div class="table-wrap" id="tableBody"></div>
+      <div class="row end"><button class="btn">Fermer</button></div>
+    </form>
+  </dialog>
+
+  <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

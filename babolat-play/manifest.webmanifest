@@ -1,0 +1,14 @@
+{
+  "name": "Play Tracker – suivi Babolat Play",
+  "short_name": "Play Tracker",
+  "description": "Suivi des données du capteur de raquette Babolat Play.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d0d0d",
+  "theme_color": "#0d0d0d",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
