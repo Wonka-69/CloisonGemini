@@ -13,7 +13,9 @@ et garde l'historique **sur ton appareil uniquement** (aucun serveur, aucun comp
 | Vitesse moyenne et maximale par coup (balle au service, raquette sinon), effet lifté / plat / slicé | ✅ (valeurs déduites, voir plus bas) |
 | Correction de la date quand l'horloge de la raquette s'est réinitialisée (batterie vide) | ✅ |
 | Tableau de bord, évolution de la vitesse, détail de chaque séance par tranche de 5 minutes | ✅ |
-| Saisie manuelle, import et export JSON / CSV, mode hors-ligne, thème clair et sombre | ✅ |
+| Archivage des fichiers bruts de la raquette et redécodage de tout l'historique | ✅ |
+| Sauvegarde complète en un clic, restauration sans doublons, rappels de sauvegarde et d'installation | ✅ |
+| Saisie manuelle, import JSON / CSV, export CSV, mode hors-ligne, thème clair et sombre | ✅ |
 | Connexion Bluetooth : batterie, firmware, journal des paquets (labo) | 🧪 expérimental |
 | Smash et zone d'impact sur le tamis | ❌ pas encore décodés dans les fichiers de la raquette |
 
@@ -68,6 +70,21 @@ Pour tester en local : `python3 -m http.server 8000` dans ce dossier, puis `http
    Tu peux aussi ajouter une séance à la main, importer ou exporter en JSON / CSV.
 4. **Démo** : sur un tableau de bord vide, *Charger la démo* affiche des données fictives (supprimables).
 
+## Tes données : où elles sont et comment ne pas les perdre
+
+- Tout est stocké **sur l'appareil**, dans la base locale du navigateur (IndexedDB) : séances, réglages et
+  **copie brute de chaque fichier `LOG*.BIN`** importé. Rien n'est envoyé sur Internet.
+- **Fichiers bruts** : ils permettent de tout redécoder plus tard (*Séances › Redécoder l'historique*), par exemple
+  quand le smash ou la zone d'impact seront décodés, même si la raquette a effacé ses fichiers entre-temps.
+- **Sur iPhone**, Safari peut effacer les données d'un site non ouvert depuis 7 jours. **Installe l'appli sur l'écran
+  d'accueil** : elle est alors protégée. Attention, l'appli installée a sa propre mémoire, séparée de Safari :
+  pour y transférer des séances, fais *Sauvegarder tout* dans Safari puis *Restaurer* dans l'appli installée.
+- **Sauvegarde** (*Séances › Sauvegarder tout*) : un seul fichier JSON avec les séances, les fichiers bruts et le
+  réglage d'horloge. Sur téléphone, la feuille de partage permet de l'enregistrer dans Fichiers, iCloud Drive ou
+  Google Drive. L'appli te le rappelle si tu n'as pas sauvegardé depuis 14 jours et que tu as de nouvelles séances.
+- **Restauration** : elle **ajoute** les séances manquantes sans rien effacer. Tu peux restaurer plusieurs fois le même fichier.
+- Les données des versions précédentes de l'appli (localStorage) sont migrées automatiquement.
+
 Colonnes CSV acceptées :
 `date, durationMin, activeMin, longestRally, forehand, backhand, serve, volley, smash, speed_forehand, speed_backhand, speed_serve, speed_volley, speed_smash, max_serve, sweetSpotPct, notes`
 
@@ -104,7 +121,8 @@ js/app.js             logique de l'interface
 js/ble.js             connexion Web Bluetooth, découverte GATT, journal des paquets
 js/babolat-log.js     décodage des fichiers LOG*.BIN de la raquette (USB) et correction d'horloge
 js/protocol.js        Bluetooth : UUID connus, décodage standard, analyse de capture
-js/store.js           modèle de séance, stockage local, import/export, démo
+js/store.js           modèle de séance, stockage, sauvegarde / restauration, import/export, démo
+js/db.js              accès IndexedDB (séances, réglages, fichiers bruts)
 js/charts.js          graphiques SVG sans dépendance
 sw.js                 cache hors-ligne
 manifest.webmanifest  installation en tant qu'appli

@@ -1,5 +1,5 @@
 import {
-  store, normalizeSession, totalStrokes, STROKES, SPINS, toCsv, fromCsv, fromJson, demoSessions,
+  store, normalizeSession, totalStrokes, STROKES, SPINS, toCsv, fromCsv, demoSessions, buildBackup, restoreBackup,
 } from './store.js';
 import { stackedBars, hBars, stacked100, impactMap, legend, hideTooltip, lineChart } from './charts.js';
 import { parseLog, calibrate, correctClock, toAppSession } from './babolat-log.js';
@@ -35,6 +35,9 @@ function download(name, content, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+// Chargement des données (IndexedDB) avant tout affichage.
+await store.init({ onError: (e) => toast(`Enregistrement impossible : ${e.message}`, 6000) });
+
 // =====================================================================
 // Navigation
 // =====================================================================
@@ -43,7 +46,7 @@ function showView(name) {
   for (const v of $$('.view')) v.toggleAttribute('data-active', v.id === `view-${name}`);
   hideTooltip();
   if (name === 'dashboard') renderDashboard();
-  if (name === 'sessions') renderSessions();
+  if (name === 'sessions') { renderSessions(); renderStorageInfo(); }
   try { sessionStorage.setItem('playtracker.view', name); } catch { /* sans importance */ }
 }
 $$('.tabs button').forEach((b) => b.addEventListener('click', () => showView(b.dataset.view)));
@@ -82,6 +85,7 @@ function tile(label, value, unit = '', sub = '') {
 }
 
 function renderDashboard() {
+  renderBanners();
   for (const c of $$('.filters .chip')) c.setAttribute('aria-pressed', String(Number(c.dataset.range) === range));
   const all = store.sessions();
   const list = filtered();
@@ -336,8 +340,9 @@ $('#importFile').addEventListener('change', async (e) => {
   if (!file) return;
   try {
     const text = await file.text();
-    const sessions = /\.csv$/i.test(file.name) || file.type === 'text/csv' ? fromCsv(text) : fromJson(text);
-    const n = store.addMany(sessions);
+    let n;
+    if (/\.csv$/i.test(file.name) || file.type === 'text/csv') n = store.addMany(fromCsv(text));
+    else n = (await restoreBackup(JSON.parse(text))).added;
     toast(`${n} séance(s) importée(s)`);
     renderSessions();
   } catch (err) {
@@ -345,7 +350,6 @@ $('#importFile').addEventListener('change', async (e) => {
   }
 });
 const stamp = () => new Date().toISOString().slice(0, 10);
-$('#exportJson').addEventListener('click', () => download(`seances-${stamp()}.json`, JSON.stringify({ sessions: store.sessions() }, null, 2), 'application/json'));
 $('#exportCsv').addEventListener('click', () => download(`seances-${stamp()}.csv`, toCsv(store.sessions()), 'text/csv'));
 
 // =====================================================================
@@ -413,19 +417,42 @@ async function importLogFiles(fileList) {
   box.textContent = 'Lecture en cours…';
   const parsed = [];
   const errors = [];
+  let archived = 0;
   for (const f of files) {
     try {
-      parsed.push(...await parseLog(await f.arrayBuffer(), f.name));
+      const bytes = await f.arrayBuffer();
+      // Copie brute archivée AVANT décodage : on pourra toujours redécoder plus tard.
+      try {
+        if (await store.archiveRaw(f.name, bytes)) archived++;
+      } catch (e) {
+        errors.push(`${f.name} : archivage impossible (${e.message})`);
+      }
+      parsed.push(...await parseLog(bytes, f.name));
     } catch (e) {
       errors.push(`${f.name} : ${e.message}`);
     }
   }
+  const r = ingestParsed(parsed);
+  box.textContent = [
+    `${files.length} fichier(s) lu(s) : ${r.added} nouvelle(s) séance(s), ${r.updated} mise(s) à jour.`,
+    archived ? `${archived} fichier(s) brut(s) archivé(s).` : '',
+    r.short ? `${r.short} allumage(s) de moins de ${MIN_SWINGS} coups ignoré(s).` : '',
+    r.undated ? `${r.undated} séance(s) en attente : l'horloge de la raquette doit être réglée.` : '',
+    [...errors, ...r.errors].length ? `Erreurs : ${[...errors, ...r.errors].join(' ; ')}` : '',
+  ].filter(Boolean).join(' ');
+  if (r.added || r.updated) {
+    toast(`${r.added} nouvelle(s) séance(s) importée(s)`);
+    requestPersistence();
+  }
+  renderStorageInfo();
+}
+
+/** Séances décodées -> séances de l'appli (dédoublonnage, filtre, correction d'horloge). */
+function ingestParsed(parsed) {
   // Un même début de séance peut apparaître dans un fichier qui a grandi : on garde la version la plus complète.
   const byId = new Map();
   for (const p of parsed) if (!byId.has(p.id) || p.swings.length > byId.get(p.id).swings.length) byId.set(p.id, p);
   const real = [...byId.values()].filter((p) => p.swings.length >= MIN_SWINGS);
-  const short = byId.size - real.length;
-
   const clock = store.settings().clock;
   const ready = [];
   const undated = [];
@@ -433,20 +460,15 @@ async function importLogFiles(fileList) {
     const c = correctClock(clock, p);
     if (c) ready.push(c); else undated.push(p);
   }
+  const errors = [];
   let res = { added: 0, updated: 0 };
   try {
     res = store.addMany(ready.map((p) => normalizeSession(toAppSession(p))), { replace: true });
   } catch (e) {
     errors.push(e.message);
   }
-  box.textContent = [
-    `${files.length} fichier(s) lu(s) : ${res.added} nouvelle(s) séance(s), ${res.updated} mise(s) à jour.`,
-    short ? `${short} allumage(s) de moins de ${MIN_SWINGS} coups ignoré(s).` : '',
-    undated.length ? `${undated.length} séance(s) en attente : l'horloge de la raquette doit être réglée.` : '',
-    errors.length ? `Erreurs : ${errors.join(' ; ')}` : '',
-  ].filter(Boolean).join(' ');
-  if (res.added || res.updated) toast(`${res.added} nouvelle(s) séance(s) importée(s)`);
   if (undated.length) askClock(undated);
+  return { ...res, short: byId.size - real.length, undated: undated.length, errors };
 }
 
 function askClock(undated) {
@@ -468,6 +490,7 @@ $('#clockDialog').addEventListener('close', () => {
   const fixed = pendingReset.map((p) => correctClock(clock, p)).filter(Boolean);
   const res = store.addMany(fixed.map((p) => normalizeSession(toAppSession(p))), { replace: true });
   pendingReset = null;
+  $('#usbResult').hidden = false;
   $('#usbResult').textContent += ` Horloge réglée : ${res.added} séance(s) ajoutée(s).`;
   toast(`${res.added} séance(s) datée(s) et importée(s)`);
 });
@@ -740,6 +763,164 @@ $('#saveUuids').addEventListener('click', () => {
   uuidBox.value = valid.join('\n');
   $('#uuidMsg').textContent = `${valid.length} UUID enregistré(s)` + (valid.length < lines.length ? ` — ${lines.length - valid.length} ignoré(s), format invalide` : '') + '. Reconnecte la raquette.';
 });
+
+// =====================================================================
+// Sauvegarde, stockage, installation
+// =====================================================================
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isMobile = isIOS || /Android/.test(navigator.userAgent);
+const isInstalled = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const realSessions = () => store.sessions().filter((s) => s.source !== 'demo');
+const DAY = 86400000;
+
+async function requestPersistence() {
+  try {
+    if (navigator.storage?.persist && !(await navigator.storage.persisted())) await navigator.storage.persist();
+  } catch { /* non pris en charge */ }
+  renderStorageInfo();
+}
+
+function ago(iso) {
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / DAY);
+  return d <= 0 ? "aujourd'hui" : d === 1 ? 'hier' : `il y a ${d} jours`;
+}
+
+async function renderStorageInfo() {
+  const dl = $('#storageInfo');
+  if (!dl) return;
+  const rows = [];
+  const n = realSessions().length;
+  rows.push(['Séances', `${fmtInt(n)}${store.sessions().length > n ? ' (+ démo)' : ''}`]);
+  let rawN = 0;
+  try { rawN = await store.rawCount(); } catch { /* rien */ }
+  rows.push(['Fichiers bruts archivés', store.backend === 'indexeddb' ? fmtInt(rawN) : 'indisponible ici']);
+  rows.push(['Stockage', store.backend === 'indexeddb' ? 'base locale (IndexedDB)' : store.backend === 'localstorage' ? 'limité (navigation privée ?)' : 'indisponible']);
+  let persisted = null;
+  try { persisted = navigator.storage?.persisted ? await navigator.storage.persisted() : null; } catch { /* rien */ }
+  rows.push(['Protection contre l\'effacement', persisted ? ['ok', 'activée'] : isInstalled() ? 'appli installée' : ['warn', isIOS ? "non : installe l'appli sur l'écran d'accueil" : 'non garantie']]);
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (est?.usage != null) rows.push(['Espace utilisé', `${(est.usage / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo`]);
+  } catch { /* rien */ }
+  const last = store.settings().lastBackup;
+  rows.push(['Dernière sauvegarde', last ? `${ago(last)} (${fmtDate(last, { day: 'numeric', month: 'long', year: 'numeric' })})` : ['warn', 'jamais']]);
+  dl.replaceChildren();
+  for (const [k, v] of rows) {
+    const dt = document.createElement('dt'); dt.textContent = k;
+    const dd = document.createElement('dd');
+    if (Array.isArray(v)) { dd.className = v[0] === 'ok' ? 'ok' : 'warn-text'; dd.textContent = v[1]; } else dd.textContent = v;
+    dl.append(dt, dd);
+  }
+}
+
+async function backupNow() {
+  let data;
+  try {
+    data = JSON.stringify(await buildBackup());
+  } catch (e) {
+    toast(`Sauvegarde impossible : ${e.message}`);
+    return;
+  }
+  const name = `play-tracker-sauvegarde-${new Date().toISOString().slice(0, 10)}.json`;
+  let done = false;
+  // Sur téléphone : feuille de partage (Enregistrer dans Fichiers, iCloud Drive, Google Drive…).
+  if (isMobile && navigator.canShare) {
+    const file = new File([data], name, { type: 'application/json' });
+    if (navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: 'Sauvegarde Play Tracker' });
+        done = true;
+      } catch (e) {
+        if (e.name === 'AbortError') return; // annulé par l'utilisateur
+      }
+    }
+  }
+  if (!done) {
+    download(name, data, 'application/json');
+    done = true;
+  }
+  const count = realSessions().length;
+  store.saveSettings({ lastBackup: new Date().toISOString(), lastBackupCount: count, backupSnoozedUntil: null });
+  toast(`Sauvegarde créée : ${count} séance(s)`);
+  renderStorageInfo();
+  renderBanners();
+}
+$('#backupNow').addEventListener('click', backupNow);
+$('#backupNowBanner').addEventListener('click', backupNow);
+
+$('#restoreFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const r = await restoreBackup(JSON.parse(await file.text()));
+    toast(`${r.added} séance(s) restaurée(s)${r.rawAdded ? `, ${r.rawAdded} fichier(s) brut(s)` : ''}`);
+    requestPersistence();
+    renderSessions();
+  } catch (err) {
+    toast(`Restauration impossible : ${err.message}`, 5000);
+  }
+});
+
+$('#redecode').addEventListener('click', async () => {
+  const files = await store.rawFiles();
+  if (!files.length) {
+    toast("Aucun fichier brut archivé : importe d'abord les fichiers de la raquette.");
+    return;
+  }
+  const parsed = [];
+  const errors = [];
+  for (const f of files) {
+    try { parsed.push(...await parseLog(f.bytes, f.name)); } catch (err) { errors.push(`${f.name} : ${err.message}`); }
+  }
+  const r = ingestParsed(parsed);
+  toast(`${files.length} fichier(s) redécodé(s) : ${r.updated} séance(s) mise(s) à jour, ${r.added} nouvelle(s)` +
+    (errors.length ? ` (${errors.length} erreur(s))` : ''), 5000);
+  renderSessions();
+});
+
+// ---- bandeaux du tableau de bord ----
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  renderBanners();
+});
+window.addEventListener('appinstalled', () => { deferredInstall = null; renderBanners(); });
+
+function renderBanners() {
+  const st = store.settings();
+  const now = Date.now();
+  // Installation : sur iPhone, Safari peut effacer les données d'un site non installé après 7 jours sans visite.
+  const showInstall = !isInstalled() && isMobile && !(st.installSnoozedUntil && now < st.installSnoozedUntil);
+  $('#installBanner').hidden = !showInstall;
+  if (showInstall) {
+    $('#installText').textContent = isIOS
+      ? "Touche Partager puis « Sur l'écran d'accueil ». Sinon, Safari peut effacer tes données après 7 jours sans ouvrir la page. " +
+        "L'appli installée a sa propre mémoire : si tu as déjà des séances ici, fais « Sauvegarder tout » puis « Restaurer » dans l'appli installée."
+      : "Une fois installée, l'appli s'ouvre comme les autres et tes données sont mieux protégées contre l'effacement automatique.";
+    $('#installBtn').hidden = !deferredInstall;
+  }
+  // Sauvegarde : jamais faite, ou plus de 14 jours avec de nouvelles séances depuis.
+  const n = realSessions().length;
+  const stale = !st.lastBackup || (now - new Date(st.lastBackup).getTime() > 14 * DAY && n !== st.lastBackupCount);
+  const showBackup = n > 0 && stale && !(st.backupSnoozedUntil && now < st.backupSnoozedUntil);
+  $('#backupBanner').hidden = !showBackup;
+  if (showBackup) {
+    $('#backupText').textContent = st.lastBackup
+      ? `Dernière sauvegarde ${ago(st.lastBackup)}. Depuis, tu as de nouvelles séances.`
+      : `Tes ${n} séance(s) ne sont enregistrées que sur cet appareil. Une sauvegarde les protège si tu le perds ou le changes.`;
+  }
+}
+$('#installBtn').addEventListener('click', async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice.catch(() => null);
+  deferredInstall = null;
+  renderBanners();
+});
+$('#installLater').addEventListener('click', () => { store.saveSettings({ installSnoozedUntil: Date.now() + 14 * DAY }); renderBanners(); });
+$('#backupLater').addEventListener('click', () => { store.saveSettings({ backupSnoozedUntil: Date.now() + 7 * DAY }); renderBanners(); });
 
 // =====================================================================
 // Démarrage

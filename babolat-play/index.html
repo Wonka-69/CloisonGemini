@@ -34,6 +34,26 @@
   <main>
     <!-- ============ TABLEAU DE BORD ============ -->
     <section id="view-dashboard" class="view" data-active>
+      <div id="installBanner" class="banner" hidden>
+        <div>
+          <b>Installe l'appli sur ton écran d'accueil</b>
+          <p id="installText" class="small"></p>
+        </div>
+        <div class="row wrap">
+          <button class="btn" id="installBtn" hidden>Installer</button>
+          <button class="btn ghost" id="installLater">Plus tard</button>
+        </div>
+      </div>
+      <div id="backupBanner" class="banner" hidden>
+        <div>
+          <b>Pense à sauvegarder tes séances</b>
+          <p id="backupText" class="small"></p>
+        </div>
+        <div class="row wrap">
+          <button class="btn" id="backupNowBanner">Sauvegarder</button>
+          <button class="btn ghost" id="backupLater">Plus tard</button>
+        </div>
+      </div>
       <div class="filters" role="group" aria-label="Période">
         <button class="chip" data-range="7">7 jours</button>
         <button class="chip" data-range="30">30 jours</button>
@@ -89,10 +109,22 @@
 
     <!-- ============ SEANCES ============ -->
     <section id="view-sessions" class="view">
+      <article class="card" id="backupCard">
+        <h3>Sauvegarde et stockage</h3>
+        <dl class="kv" id="storageInfo"></dl>
+        <div class="row wrap mt-s">
+          <button class="btn" id="backupNow">Sauvegarder tout</button>
+          <label class="btn ghost file">Restaurer une sauvegarde<input type="file" id="restoreFile" accept=".json,application/json" hidden></label>
+          <button class="btn ghost" id="redecode">Redécoder l'historique</button>
+        </div>
+        <p class="muted small mt-s">La sauvegarde contient tes séances, les fichiers bruts de la raquette et le réglage d'horloge.
+          Range-la hors du téléphone (iCloud Drive, Google Drive, ordinateur). La restauration <b>ajoute</b> les séances manquantes
+          sans rien effacer. « Redécoder » relit les fichiers bruts archivés avec le décodeur actuel : utile quand le décodage s'améliore.</p>
+      </article>
+
       <div class="row wrap">
         <button class="btn" id="newSession">+ Nouvelle séance</button>
         <label class="btn ghost file">Importer (JSON / CSV)<input type="file" id="importFile" accept=".json,.csv,application/json,text/csv" hidden></label>
-        <button class="btn ghost" id="exportJson">Exporter JSON</button>
         <button class="btn ghost" id="exportCsv">Exporter CSV</button>
       </div>
       <div id="sessionList" class="list"></div>

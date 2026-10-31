@@ -14,18 +14,22 @@ export const SPINS = [
   { key: 'slice', label: 'Slicé', color: 'var(--s3)' },
 ];
 
+import { kvGet, kvSet, rawPut, rawHas, rawGetAll, rawCount, sha1Hex, toBase64, fromBase64 } from './db.js';
+
+// Anciennes clés localStorage (versions précédentes de l'appli) : migrées vers IndexedDB au démarrage.
 const KEY_SESSIONS = 'playtracker.sessions.v1';
 const KEY_SETTINGS = 'playtracker.settings.v1';
+const DEFAULT_SETTINGS = { extraUuids: [], range: 0, clock: null, lastBackup: null };
 
-function safeGet(key, fallback) {
+function lsGet(key) {
   try {
     const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    return raw ? JSON.parse(raw) : null;
   } catch {
-    return fallback;
+    return null;
   }
 }
-function safeSet(key, value) {
+function lsSet(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
     return true;
@@ -86,12 +90,69 @@ export function totalStrokes(s) {
   return STROKES.reduce((a, { key }) => a + (s.strokes[key] || 0), 0);
 }
 
+// Les données sont gardées en mémoire (lecture immédiate) et écrites dans IndexedDB
+// en arrière-plan. Sans IndexedDB (navigation privée…), repli sur localStorage.
+let cache = { sessions: [], settings: { ...DEFAULT_SETTINGS } };
+let backend = 'none'; // 'indexeddb' | 'localstorage' | 'none'
+let onError = (e) => console.error(e);
+let writeChain = Promise.resolve();
+
+function persist(key, value) {
+  if (backend === 'indexeddb') {
+    writeChain = writeChain.then(() => kvSet(key, value)).catch((e) => onError(e));
+    return true;
+  }
+  if (backend === 'localstorage') {
+    const ok = lsSet(key === 'sessions' ? KEY_SESSIONS : KEY_SETTINGS, value);
+    if (!ok) onError(new Error("stockage du téléphone plein ou bloqué"));
+    return ok;
+  }
+  return false;
+}
+
 export const store = {
+  /** À appeler une fois au démarrage, avant toute lecture. */
+  async init({ onError: handler } = {}) {
+    if (handler) onError = handler;
+    const oldSessions = lsGet(KEY_SESSIONS);
+    const oldSettings = lsGet(KEY_SETTINGS);
+    try {
+      const [sessions, settings] = await Promise.all([kvGet('sessions'), kvGet('settings')]);
+      backend = 'indexeddb';
+      cache.sessions = Array.isArray(sessions) ? sessions : [];
+      cache.settings = { ...DEFAULT_SETTINGS, ...(settings || {}) };
+      // Migration depuis localStorage (versions précédentes).
+      if (oldSessions || oldSettings) {
+        if (!sessions && Array.isArray(oldSessions)) cache.sessions = oldSessions;
+        if (!settings && oldSettings) cache.settings = { ...DEFAULT_SETTINGS, ...oldSettings };
+        await kvSet('sessions', cache.sessions);
+        await kvSet('settings', cache.settings);
+        try {
+          localStorage.removeItem(KEY_SESSIONS);
+          localStorage.removeItem(KEY_SETTINGS);
+        } catch { /* sans importance */ }
+      }
+    } catch {
+      backend = 'localstorage';
+      cache.sessions = Array.isArray(oldSessions) ? oldSessions : [];
+      cache.settings = { ...DEFAULT_SETTINGS, ...(oldSettings || {}) };
+    }
+    return backend;
+  },
+  get backend() {
+    return backend;
+  },
+  /** Attend la fin des écritures en cours (avant une sauvegarde, par exemple). */
+  flush() {
+    return writeChain;
+  },
+
   sessions() {
-    return safeGet(KEY_SESSIONS, []).sort((a, b) => a.date.localeCompare(b.date));
+    return [...cache.sessions].sort((a, b) => a.date.localeCompare(b.date));
   },
   saveAll(list) {
-    return safeSet(KEY_SESSIONS, list);
+    cache.sessions = list;
+    return persist('sessions', list);
   },
   upsert(session) {
     const list = this.sessions();
@@ -114,6 +175,7 @@ export const store = {
         updated++;
         continue;
       }
+      index.set(s.id, list.length);
       list.push(s);
       added++;
     }
@@ -127,12 +189,77 @@ export const store = {
     this.saveAll(this.sessions().filter((s) => s.source !== source));
   },
   settings() {
-    return safeGet(KEY_SETTINGS, { extraUuids: [], range: 0, clock: null });
+    return { ...cache.settings };
   },
   saveSettings(patch) {
-    safeSet(KEY_SETTINGS, { ...this.settings(), ...patch });
+    cache.settings = { ...cache.settings, ...patch };
+    persist('settings', cache.settings);
+  },
+
+  // ---------- archive des fichiers bruts de la raquette ----------
+  /** Archive un fichier LOG*.BIN (une seule fois par contenu). Renvoie true s'il était nouveau. */
+  async archiveRaw(name, bytes) {
+    if (backend !== 'indexeddb') return false;
+    const hash = await sha1Hex(bytes);
+    if (await rawHas(hash)) return false;
+    await rawPut({ hash, name, importedAt: new Date().toISOString(), bytes: bytes.slice(0) });
+    return true;
+  },
+  async rawFiles() {
+    return backend === 'indexeddb' ? rawGetAll() : [];
+  },
+  async rawCount() {
+    return backend === 'indexeddb' ? rawCount() : 0;
   },
 };
+
+// ---------- sauvegarde complète ----------
+
+export const BACKUP_FORMAT = 'playtracker-backup/1';
+
+export async function buildBackup() {
+  await store.flush();
+  const raw = await store.rawFiles();
+  const { clock, extraUuids } = store.settings();
+  return {
+    format: BACKUP_FORMAT,
+    app: 'Play Tracker',
+    exportedAt: new Date().toISOString(),
+    sessions: store.sessions(),
+    settings: { clock, extraUuids },
+    rawLogs: raw.map((r) => ({ hash: r.hash, name: r.name, importedAt: r.importedAt, base64: toBase64(r.bytes) })),
+  };
+}
+
+/**
+ * Restaure une sauvegarde en la FUSIONNANT avec les données présentes (rien n'est effacé).
+ * Accepte aussi un simple export JSON de séances.
+ */
+export async function restoreBackup(data) {
+  const isBackup = data && data.format === BACKUP_FORMAT;
+  const list = Array.isArray(data) ? data : Array.isArray(data?.sessions) ? data.sessions : null;
+  if (!list) throw new Error("ce fichier n'est pas une sauvegarde Play Tracker");
+  const sessions = list.map((s) => normalizeSession(isBackup ? s : { source: 'import', ...s }));
+  const added = store.addMany(sessions);
+  let rawAdded = 0;
+  if (isBackup) {
+    for (const r of data.rawLogs || []) {
+      const bytes = fromBase64(r.base64);
+      if (await store.archiveRaw(r.name, bytes)) rawAdded++;
+    }
+    const cur = store.settings();
+    const patch = {};
+    if (!cur.clock && data.settings?.clock) patch.clock = data.settings.clock;
+    if (!(cur.extraUuids || []).length && data.settings?.extraUuids?.length) patch.extraUuids = data.settings.extraUuids;
+    // Les séances restaurées sont, par définition, déjà dans une sauvegarde.
+    if (!cur.lastBackup && data.exportedAt) {
+      patch.lastBackup = data.exportedAt;
+      patch.lastBackupCount = sessions.filter((x) => x.source !== 'demo').length;
+    }
+    if (Object.keys(patch).length) store.saveSettings(patch);
+  }
+  return { added, rawAdded, isBackup };
+}
 
 // ---------- import / export ----------
 
