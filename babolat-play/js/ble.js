@@ -7,18 +7,17 @@ export function bluetoothSupport() {
   const ua = navigator.userAgent;
   const isIOS = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
   if (!window.isSecureContext) {
-    return { ok: false, reason: "La page doit être servie en HTTPS (ou depuis localhost) pour accéder au Bluetooth." };
+    return { ok: false, reason: 'la page doit être servie en HTTPS (ou depuis localhost).' };
   }
   if (!('bluetooth' in navigator)) {
     if (isIOS) {
       return {
         ok: false,
-        reason: "Safari et les autres navigateurs iPhone n'ont pas accès au Bluetooth. " +
-          "Installe le navigateur gratuit « Bluefy – Web BLE Browser » depuis l'App Store et ouvre cette page dedans. " +
-          'Tes séances restent consultables ici dans Safari.',
+        reason: "les navigateurs iPhone n'ont pas accès au Bluetooth. L'import USB ci-dessus fonctionne sans. " +
+          "Pour essayer le Bluetooth, ouvre cette page dans le navigateur gratuit « Bluefy – Web BLE Browser ».",
       };
     }
-    return { ok: false, reason: 'Ce navigateur ne gère pas Web Bluetooth. Utilise Chrome ou Edge (Android, Windows, macOS, ChromeOS).' };
+    return { ok: false, reason: 'ce navigateur ne gère pas Web Bluetooth (il faut Chrome ou Edge). L\'import USB ci-dessus fonctionne sans.' };
   }
   return { ok: true };
 }

@@ -1,7 +1,8 @@
 import {
   store, normalizeSession, totalStrokes, STROKES, SPINS, toCsv, fromCsv, fromJson, demoSessions,
 } from './store.js';
-import { stackedBars, hBars, stacked100, impactMap, legend, hideTooltip } from './charts.js';
+import { stackedBars, hBars, stacked100, impactMap, legend, hideTooltip, lineChart } from './charts.js';
+import { parseLog, calibrate, correctClock, toAppSession } from './babolat-log.js';
 import { RacketConnection, bluetoothSupport } from './ble.js';
 import {
   shortUuid, fromHex, KNOWN_CHARS, runDecoders, analyzeCapture, asciiPreview, normalizeUuid,
@@ -10,6 +11,7 @@ import {
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const fmtInt = (n) => Math.round(n).toLocaleString('fr-FR');
+const fmtKmh = (n) => (n == null ? '–' : `${Math.round(n).toLocaleString('fr-FR')} km/h`);
 const fmtDate = (iso, opts = { day: 'numeric', month: 'short' }) => new Date(iso).toLocaleDateString('fr-FR', opts);
 const fmtDateTime = (iso) => new Date(iso).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' });
 const SOURCE_LABEL = { manual: 'manuelle', import: 'importée', racket: 'raquette', demo: 'démo' };
@@ -91,24 +93,27 @@ function renderDashboard() {
   const strokes = list.reduce((a, s) => a + totalStrokes(s), 0);
   const minutes = list.reduce((a, s) => a + (s.durationMin || 0), 0);
   const active = list.reduce((a, s) => a + (s.activeMin || 0), 0);
-  const sweet = avg(list.map((s) => s.sweetSpotPct));
-  const powerAll = avg(list.flatMap((s) => STROKES.map(({ key }) => s.power[key]).filter((v) => v != null)));
-  const rally = Math.max(0, ...list.map((s) => s.longestRally || 0));
+  const serveMax = Math.max(0, ...list.map((s) => s.maxSpeed.serve || 0)) || null;
+  const serveAvg = avg(list.map((s) => s.speed.serve));
+  const fhAvg = avg(list.map((s) => s.speed.forehand));
+  const bhAvg = avg(list.map((s) => s.speed.backhand));
   const tiles = $('#tiles');
   tiles.replaceChildren(
     tile('Séances', fmtInt(list.length), '', range ? `sur ${range} jours` : 'au total'),
     tile('Coups', fmtInt(strokes), '', list.length ? `${fmtInt(strokes / list.length)} par séance` : ''),
     tile('Temps de jeu', minutes >= 120 ? (minutes / 60).toLocaleString('fr-FR', { maximumFractionDigits: 1 }) : fmtInt(minutes), minutes >= 120 ? 'h' : 'min', active ? `dont ${fmtInt(active)} min actives` : ''),
-    tile('Sweet spot', sweet == null ? '–' : fmtInt(sweet), sweet == null ? '' : '%', 'des impacts centrés'),
-    tile('Puissance moy.', powerAll == null ? '–' : fmtInt(powerAll), powerAll == null ? '' : '/100', rally ? `plus long échange : ${rally} coups` : ''),
+    tile('Service le plus rapide', serveMax == null ? '–' : fmtInt(serveMax), serveMax == null ? '' : 'km/h', serveAvg == null ? '' : `moyenne ${fmtKmh(serveAvg)}`),
+    tile('Coup droit moyen', fhAvg == null ? '–' : fmtInt(fhAvg), fhAvg == null ? '' : 'km/h', bhAvg == null ? '' : `revers ${fmtKmh(bhAvg)}`),
   );
 
   // ---- coups par séance ----
   const recent = list.slice(-20);
   const cats = recent.map((s) => ({ label: fmtDate(s.date), title: fmtDateTime(s.date) }));
   const vals = recent.map((s) => s.strokes);
-  legend($('#legendPerSession'), STROKES);
-  if (recent.length) stackedBars($('#chartPerSession'), { categories: cats, series: STROKES, values: vals });
+  // Types de coups jamais enregistrés sur la période (ex. smash, non détecté par la raquette) : masqués.
+  const usedStrokes = STROKES.filter((st) => list.some((x) => x.strokes[st.key]));
+  legend($('#legendPerSession'), usedStrokes);
+  if (recent.length) stackedBars($('#chartPerSession'), { categories: cats, series: usedStrokes, values: vals });
   else $('#chartPerSession').textContent = 'Aucune séance sur cette période.';
   tables.perSession = {
     title: 'Coups par séance',
@@ -117,7 +122,7 @@ function renderDashboard() {
   };
 
   // ---- répartition ----
-  const byType = STROKES.map((s) => ({ ...s, value: list.reduce((a, x) => a + (x.strokes[s.key] || 0), 0) }));
+  const byType = usedStrokes.map((s) => ({ ...s, value: list.reduce((a, x) => a + (x.strokes[s.key] || 0), 0) }));
   const tot = byType.reduce((a, b) => a + b.value, 0);
   hBars($('#chartByType'), byType.map((s) => ({
     label: s.label, value: s.value, color: s.color, tipLabel: 'coups',
@@ -133,8 +138,9 @@ function renderDashboard() {
   const withImpact = list.filter((s) => s.impact);
   const cells = Array(9).fill(0);
   for (const s of withImpact) s.impact.forEach((v, i) => { cells[i] += v; });
+  // La zone d'impact n'est pas encore décodée depuis les fichiers de la raquette : carte masquée sans données.
+  $('#impactCard').hidden = !withImpact.length;
   if (withImpact.length) impactMap($('#chartImpact'), cells);
-  else $('#chartImpact').textContent = "Pas encore de données d'impact (elles viennent du capteur ou d'un import).";
   const zones = ['Haut gauche', 'Haut centre', 'Haut droite', 'Gauche', 'Centre', 'Droite', 'Bas gauche', 'Bas centre', 'Bas droite'];
   const ctot = cells.reduce((a, b) => a + b, 0);
   tables.impact = {
@@ -143,16 +149,45 @@ function renderDashboard() {
     rows: zones.map((z, i) => [z, cells[i], `${ctot ? Math.round((cells[i] / ctot) * 100) : 0} %`]),
   };
 
-  // ---- puissance ----
-  const pw = STROKES.map((s) => ({ ...s, value: avg(list.map((x) => x.power[s.key])) }));
-  const pwRows = pw.filter((p) => p.value != null);
-  if (pwRows.length) {
-    hBars($('#chartPower'), pwRows.map((p) => ({ label: p.label, value: p.value, color: p.color, tipLabel: 'indice moyen', display: `${fmtInt(p.value)} / 100` })), { max: 100 });
-  } else $('#chartPower').textContent = 'Pas encore de données de puissance.';
-  tables.power = { title: 'Puissance moyenne', head: ['Coup', 'Indice /100'], rows: pw.map((p) => [p.label, p.value == null ? '–' : fmtInt(p.value)]) };
+  // ---- vitesse ----
+  const sp = STROKES.map((st) => ({
+    ...st,
+    value: avg(list.map((x) => x.speed[st.key])),
+    max: Math.max(0, ...list.map((x) => x.maxSpeed[st.key] || 0)) || null,
+  }));
+  const spRows = sp.filter((p) => p.value != null);
+  if (spRows.length) {
+    hBars($('#chartSpeed'), spRows.map((p) => ({
+      label: p.label, value: p.value, color: p.color, tipLabel: p.max ? `moyenne · max ${fmtKmh(p.max)}` : 'moyenne',
+      display: fmtKmh(p.value),
+    })));
+  } else $('#chartSpeed').textContent = 'Pas encore de données de vitesse.';
+  tables.speed = {
+    title: 'Vitesse par coup (km/h)',
+    head: ['Coup', 'Moyenne', 'Maximum'],
+    rows: sp.map((p) => [p.label, p.value == null ? '–' : fmtInt(p.value), p.max == null ? '–' : fmtInt(p.max)]),
+  };
+
+  // ---- évolution de la vitesse ----
+  const trendSeries = STROKES.filter((st) => ['forehand', 'backhand', 'serve'].includes(st.key));
+  const withSpeed = list.filter((x) => trendSeries.some((st) => x.speed[st.key] != null)).slice(-30);
+  legend($('#legendTrend'), trendSeries);
+  if (withSpeed.length) {
+    lineChart($('#chartTrend'), {
+      categories: withSpeed.map((x) => ({ label: fmtDate(x.date), title: fmtDateTime(x.date) })),
+      series: trendSeries,
+      values: withSpeed.map((x) => Object.fromEntries(trendSeries.map((st) => [st.key, x.speed[st.key] ?? null]))),
+      unit: ' km/h',
+    });
+  } else $('#chartTrend').textContent = 'Pas encore de données de vitesse.';
+  tables.trend = {
+    title: 'Vitesse moyenne par séance (km/h)',
+    head: ['Date', ...trendSeries.map((st) => st.label)],
+    rows: withSpeed.map((x) => [fmtDateTime(x.date), ...trendSeries.map((st) => (x.speed[st.key] == null ? '–' : fmtInt(x.speed[st.key])))]),
+  };
 
   // ---- effets ----
-  const spinRows = STROKES.filter((s) => s.key !== 'smash').map((s) => {
+  const spinRows = STROKES.map((s) => {
     const values = { topspin: 0, flat: 0, slice: 0 };
     for (const x of list) for (const sp of SPINS) values[sp.key] += x.spin?.[s.key]?.[sp.key] || 0;
     return { label: s.label, values };
@@ -243,11 +278,14 @@ function renderSessions() {
     const parts = [
       s.durationMin != null ? `${s.durationMin} min` : null,
       `${fmtInt(totalStrokes(s))} coups`,
-      STROKES.map(({ key, label }) => `${label.toLowerCase()} ${s.strokes[key]}`).join(' · '),
-      s.sweetSpotPct != null ? `sweet spot ${s.sweetSpotPct} %` : null,
+      STROKES.filter(({ key }) => s.strokes[key]).map(({ key, label }) => `${label.toLowerCase()} ${s.strokes[key]}`).join(' · '),
+      s.maxSpeed.serve ? `service max ${fmtKmh(s.maxSpeed.serve)}` : null,
     ].filter(Boolean);
     meta.textContent = parts.join(' — ') + (s.notes ? ` — ${s.notes}` : '');
     card.append(when, actions, meta);
+    card.tabIndex = 0;
+    card.addEventListener('click', (e) => { if (!e.target.closest('button')) openDetail(s); });
+    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target === card) openDetail(s); });
     box.appendChild(card);
   }
 }
@@ -262,10 +300,10 @@ function openSessionForm(s = null) {
   d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
   f.date.value = d.toISOString().slice(0, 16);
   if (s) {
-    for (const k of ['durationMin', 'activeMin', 'longestRally', 'sweetSpotPct']) f[k].value = s[k] ?? '';
+    for (const k of ['durationMin', 'activeMin', 'longestRally']) f[k].value = s[k] ?? '';
     for (const { key } of STROKES) {
       f[`s_${key}`].value = s.strokes[key] ?? 0;
-      f[`p_${key}`].value = s.power[key] ?? '';
+      f[`v_${key}`].value = s.speed[key] ?? '';
     }
     f.notes.value = s.notes || '';
   }
@@ -282,10 +320,9 @@ $('#sessionDialog').addEventListener('close', () => {
     durationMin: f.durationMin.value,
     activeMin: f.activeMin.value,
     longestRally: f.longestRally.value,
-    sweetSpotPct: f.sweetSpotPct.value,
     notes: f.notes.value,
     strokes: Object.fromEntries(STROKES.map(({ key }) => [key, f[`s_${key}`].value])),
-    power: Object.fromEntries(STROKES.map(({ key }) => [key, f[`p_${key}`].value])),
+    speed: Object.fromEntries(STROKES.map(({ key }) => [key, f[`v_${key}`].value])),
   };
   store.upsert(normalizeSession(data));
   editing = null;
@@ -310,6 +347,145 @@ $('#importFile').addEventListener('change', async (e) => {
 const stamp = () => new Date().toISOString().slice(0, 10);
 $('#exportJson').addEventListener('click', () => download(`seances-${stamp()}.json`, JSON.stringify({ sessions: store.sessions() }, null, 2), 'application/json'));
 $('#exportCsv').addEventListener('click', () => download(`seances-${stamp()}.csv`, toCsv(store.sessions()), 'text/csv'));
+
+// =====================================================================
+// Détail d'une séance
+// =====================================================================
+const SPIN_KEYS = ['flat', 'topspin', 'slice'];
+function openDetail(s) {
+  $('#detailTitle').textContent = fmtDateTime(s.date);
+  $('#detailMeta').textContent = [
+    s.durationMin != null ? `${s.durationMin} min` : null,
+    s.activeMin ? `${s.activeMin} min de jeu actif` : null,
+    `${fmtInt(totalStrokes(s))} coups`,
+    SOURCE_LABEL[s.source] ? `séance ${SOURCE_LABEL[s.source]}` : null,
+  ].filter(Boolean).join(' · ');
+
+  const head = ['Coup', 'Nombre', 'Vitesse moy.', 'Vitesse max', 'Lifté', 'Plat', 'Slicé'];
+  const table = document.createElement('table');
+  const tr = table.createTHead().insertRow();
+  for (const h of head) { const th = document.createElement('th'); th.textContent = h; tr.appendChild(th); }
+  const tb = table.createTBody();
+  for (const st of STROKES) {
+    if (!s.strokes[st.key]) continue;
+    const sp = s.spin?.[st.key];
+    const tot = sp ? sp.topspin + sp.flat + sp.slice : 0;
+    const pct = (v) => (tot ? `${Math.round((v / tot) * 100)} %` : '–');
+    const r = tb.insertRow();
+    [st.label, fmtInt(s.strokes[st.key]), fmtKmh(s.speed[st.key]), fmtKmh(s.maxSpeed[st.key]),
+      pct(sp?.topspin), pct(sp?.flat), pct(sp?.slice)].forEach((v) => { r.insertCell().textContent = v; });
+  }
+  $('#detailTable').replaceChildren(table);
+
+  // Chronologie par tranches de 5 minutes, à partir des coups horodatés.
+  const swings = (s.swings || []).filter((w) => !w[4]);
+  $('#detailTimelineBox').hidden = !swings.length;
+  $('#detailDialog').showModal();
+  if (swings.length) {
+    const binS = 300;
+    const nBins = Math.max(1, Math.ceil((Math.max(...swings.map((w) => w[0])) + 1) / binS));
+    const values = Array.from({ length: nBins }, () => Object.fromEntries(STROKES.map((st) => [st.key, 0])));
+    for (const [t, k] of swings) if (STROKES[k]) values[Math.floor(t / binS)][STROKES[k].key]++;
+    const used = STROKES.filter((st) => values.some((v) => v[st.key]));
+    legend($('#detailLegend'), used);
+    stackedBars($('#detailTimeline'), {
+      categories: values.map((_, i) => ({ label: `${i * 5}'`, title: `De ${i * 5} à ${(i + 1) * 5} min` })),
+      series: used,
+      values,
+    });
+  }
+}
+
+// =====================================================================
+// Import USB des fichiers LOG*.BIN
+// =====================================================================
+const MIN_SWINGS = 10; // en dessous, ce sont des allumages sans vraie séance
+let pendingReset = null; // séances à l'horloge réinitialisée, en attente de réglage
+
+async function importLogFiles(fileList) {
+  const files = [...fileList].filter((f) => /^log.*\.bin$/i.test(f.name));
+  const box = $('#usbResult');
+  box.hidden = false;
+  if (!files.length) {
+    box.textContent = 'Aucun fichier LOG…BIN dans la sélection. Choisis les fichiers LOG000.BIN, LOG001.BIN… de la clé BABOLAT.';
+    return;
+  }
+  box.textContent = 'Lecture en cours…';
+  const parsed = [];
+  const errors = [];
+  for (const f of files) {
+    try {
+      parsed.push(...await parseLog(await f.arrayBuffer(), f.name));
+    } catch (e) {
+      errors.push(`${f.name} : ${e.message}`);
+    }
+  }
+  // Un même début de séance peut apparaître dans un fichier qui a grandi : on garde la version la plus complète.
+  const byId = new Map();
+  for (const p of parsed) if (!byId.has(p.id) || p.swings.length > byId.get(p.id).swings.length) byId.set(p.id, p);
+  const real = [...byId.values()].filter((p) => p.swings.length >= MIN_SWINGS);
+  const short = byId.size - real.length;
+
+  const clock = store.settings().clock;
+  const ready = [];
+  const undated = [];
+  for (const p of real) {
+    const c = correctClock(clock, p);
+    if (c) ready.push(c); else undated.push(p);
+  }
+  let res = { added: 0, updated: 0 };
+  try {
+    res = store.addMany(ready.map((p) => normalizeSession(toAppSession(p))), { replace: true });
+  } catch (e) {
+    errors.push(e.message);
+  }
+  box.textContent = [
+    `${files.length} fichier(s) lu(s) : ${res.added} nouvelle(s) séance(s), ${res.updated} mise(s) à jour.`,
+    short ? `${short} allumage(s) de moins de ${MIN_SWINGS} coups ignoré(s).` : '',
+    undated.length ? `${undated.length} séance(s) en attente : l'horloge de la raquette doit être réglée.` : '',
+    errors.length ? `Erreurs : ${errors.join(' ; ')}` : '',
+  ].filter(Boolean).join(' ');
+  if (res.added || res.updated) toast(`${res.added} nouvelle(s) séance(s) importée(s)`);
+  if (undated.length) askClock(undated);
+}
+
+function askClock(undated) {
+  pendingReset = undated;
+  $('#clockCount').textContent = `${undated.length} séance(s) ne peuvent pas être datées pour l'instant.`;
+  const f = $('#clockForm');
+  const d = new Date();
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  f.lastEnded.value = d.toISOString().slice(0, 16);
+  $('#clockDialog').showModal();
+}
+
+$('#clockDialog').addEventListener('close', () => {
+  if ($('#clockDialog').returnValue !== 'save' || !pendingReset) return;
+  const lastEnded = new Date($('#clockForm').lastEnded.value);
+  if (Number.isNaN(lastEnded.getTime())) return;
+  const clock = calibrate(pendingReset, lastEnded);
+  store.saveSettings({ clock });
+  const fixed = pendingReset.map((p) => correctClock(clock, p)).filter(Boolean);
+  const res = store.addMany(fixed.map((p) => normalizeSession(toAppSession(p))), { replace: true });
+  pendingReset = null;
+  $('#usbResult').textContent += ` Horloge réglée : ${res.added} séance(s) ajoutée(s).`;
+  toast(`${res.added} séance(s) datée(s) et importée(s)`);
+});
+
+for (const id of ['#logFiles', '#logDir']) {
+  $(id).addEventListener('change', async (e) => {
+    const files = e.target.files;
+    try {
+      await importLogFiles(files);
+    } finally {
+      e.target.value = '';
+    }
+  });
+}
+// La sélection de dossier n'existe pas sur iPhone / Android : bouton masqué.
+if (/iPhone|iPad|iPod|Android/.test(navigator.userAgent) || !('webkitdirectory' in document.createElement('input'))) {
+  $('#logDirBtn').hidden = true;
+}
 
 // =====================================================================
 // Raquette (Bluetooth)

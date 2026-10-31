@@ -40,39 +40,44 @@ function niceMax(v) {
 }
 
 /** rows: [{ label, value, color }] pour l'infobulle. */
-function bindTooltip(node, title, rows) {
-  const show = (ev) => {
-    const t = tip();
-    t.replaceChildren();
-    const h = document.createElement('div');
-    h.className = 't-title';
-    h.textContent = title;
-    t.appendChild(h);
-    for (const r of rows) {
-      const row = document.createElement('div');
-      row.className = 't-row';
-      if (r.color) {
-        const k = document.createElement('span');
-        k.className = 't-key';
-        k.style.background = r.color;
-        row.appendChild(k);
-      }
-      const b = document.createElement('b');
-      b.textContent = r.value;
-      row.appendChild(b);
-      const s = document.createElement('span');
-      s.textContent = r.label;
-      row.appendChild(s);
-      t.appendChild(row);
+function showTip(title, rows, ev, anchorNode, fracX) {
+  const t = tip();
+  t.replaceChildren();
+  const h = document.createElement('div');
+  h.className = 't-title';
+  h.textContent = title;
+  t.appendChild(h);
+  for (const r of rows) {
+    const row = document.createElement('div');
+    row.className = 't-row';
+    if (r.color) {
+      const k = document.createElement('span');
+      k.className = 't-key';
+      k.style.background = r.color;
+      row.appendChild(k);
     }
-    t.hidden = false;
-    let x, y;
-    if (ev && 'clientX' in ev && ev.clientX) { x = ev.clientX; y = ev.clientY; }
-    else { const b = node.getBoundingClientRect(); x = b.left + b.width / 2; y = b.top; }
-    const tw = t.offsetWidth, th = t.offsetHeight;
-    t.style.left = `${Math.max(8, Math.min(window.innerWidth - tw - 8, x + 12))}px`;
-    t.style.top = `${Math.max(8, y - th - 12)}px`;
-  };
+    const b = document.createElement('b');
+    b.textContent = r.value;
+    row.appendChild(b);
+    const s = document.createElement('span');
+    s.textContent = r.label;
+    row.appendChild(s);
+    t.appendChild(row);
+  }
+  t.hidden = false;
+  let x, y;
+  if (ev && ev.clientX) { x = ev.clientX; y = ev.clientY; }
+  else {
+    const b = anchorNode.getBoundingClientRect();
+    x = b.left + (fracX ?? 0.5) * b.width; y = b.top;
+  }
+  const tw = t.offsetWidth, th = t.offsetHeight;
+  t.style.left = `${Math.max(8, Math.min(window.innerWidth - tw - 8, x + 12))}px`;
+  t.style.top = `${Math.max(8, y - th - 12)}px`;
+}
+
+function bindTooltip(node, title, rows) {
+  const show = (ev) => showTip(title, rows, ev, node);
   const hide = () => { tip().hidden = true; };
   node.setAttribute('tabindex', '0');
   node.setAttribute('aria-label', `${title} : ${rows.map((r) => `${r.label} ${r.value}`).join(', ')}`);
@@ -231,4 +236,78 @@ export function impactMap(container, cells) {
 export function hideTooltip() {
   const t = tip();
   if (t) t.hidden = true;
+}
+
+/**
+ * Courbes (une par série) avec réticule vertical : l'infobulle liste toutes les séries
+ * au point le plus proche. categories: [{label, title}]  series: [{key, label, color}]
+ * values[i][key] = nombre ou null (point absent).
+ */
+export function lineChart(container, { categories, series, values, unit = '' }) {
+  container.replaceChildren();
+  const W = widthOf(container), H = 220, m = { t: 12, r: 12, b: 26, l: 40 };
+  const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img' }, container);
+  const all = values.flatMap((v) => series.map((s) => v[s.key])).filter((v) => v != null);
+  if (!all.length) return;
+  const max = niceMax(Math.max(...all));
+  const iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const n = categories.length;
+  const x = (i) => m.l + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+  const y = (v) => m.t + ih - (v / max) * ih;
+  for (let k = 0; k <= 4; k++) {
+    const v = (max / 4) * k;
+    el('line', { x1: m.l, x2: W - m.r, y1: y(v), y2: y(v), class: k ? 'gridline' : 'baseline' }, svg);
+    text(svg, m.l - 6, y(v) + 4, Math.round(v).toLocaleString('fr-FR'), { 'text-anchor': 'end' });
+  }
+  const labelEvery = Math.ceil(n / Math.max(2, Math.floor(iw / 70)));
+  categories.forEach((c, i) => {
+    if (i % labelEvery === 0) text(svg, x(i), H - 8, c.label, { 'text-anchor': i === 0 && n > 1 ? 'start' : 'middle' });
+  });
+  for (const s of series) {
+    let d = '';
+    let pen = false;
+    values.forEach((v, i) => {
+      const val = v[s.key];
+      if (val == null) { pen = false; return; }
+      d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)},${y(val).toFixed(1)}`;
+      pen = true;
+    });
+    if (d) el('path', { d, class: 'line', stroke: s.color }, svg);
+    if (n <= 30) {
+      values.forEach((v, i) => {
+        if (v[s.key] == null) return;
+        el('circle', { cx: x(i), cy: y(v[s.key]), r: 3.5, fill: s.color, stroke: 'var(--surface)', 'stroke-width': 2 }, svg);
+      });
+    }
+  }
+  const cross = el('line', { y1: m.t, y2: m.t + ih, class: 'crosshair', visibility: 'hidden' }, svg);
+  const hit = el('rect', { x: m.l - 10, y: m.t, width: iw + 20, height: ih, fill: 'transparent', class: 'mark' }, svg);
+  const rowsAt = (i) => series.map((s) => ({
+    label: s.label,
+    value: values[i][s.key] == null ? '–' : `${values[i][s.key].toLocaleString('fr-FR', { maximumFractionDigits: 1 })}${unit}`,
+    color: s.color,
+  }));
+  const nearest = (ev) => {
+    const b = svg.getBoundingClientRect();
+    const px = ((ev.clientX - b.left) / b.width) * W;
+    return Math.max(0, Math.min(n - 1, Math.round(n === 1 ? 0 : ((px - m.l) / iw) * (n - 1))));
+  };
+  hit.setAttribute('tabindex', '0');
+  hit.setAttribute('aria-label', 'Survole ou utilise les flèches pour lire les valeurs');
+  let cur = n - 1;
+  const show = (i, ev) => {
+    cur = i;
+    cross.setAttribute('x1', x(i));
+    cross.setAttribute('x2', x(i));
+    cross.setAttribute('visibility', 'visible');
+    showTip(categories[i].title || categories[i].label, rowsAt(i), ev, svg, x(i) / W);
+  };
+  hit.addEventListener('pointermove', (ev) => show(nearest(ev), ev));
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); hideTooltip(); });
+  hit.addEventListener('focus', () => show(cur));
+  hit.addEventListener('blur', () => { cross.setAttribute('visibility', 'hidden'); hideTooltip(); });
+  hit.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') { show(Math.max(0, cur - 1)); e.preventDefault(); }
+    if (e.key === 'ArrowRight') { show(Math.min(n - 1, cur + 1)); e.preventDefault(); }
+  });
 }

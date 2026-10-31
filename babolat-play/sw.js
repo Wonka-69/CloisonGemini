@@ -1,8 +1,8 @@
 // Cache hors-ligne : l'appli fonctionne sans réseau une fois ouverte une première fois.
-const CACHE = 'playtracker-v1';
+const CACHE = 'playtracker-v2';
 const ASSETS = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest', 'icons/icon.svg',
-  'js/app.js', 'js/store.js', 'js/charts.js', 'js/ble.js', 'js/protocol.js',
+  'js/app.js', 'js/store.js', 'js/charts.js', 'js/ble.js', 'js/protocol.js', 'js/babolat-log.js',
 ];
 
 self.addEventListener('install', (e) => {

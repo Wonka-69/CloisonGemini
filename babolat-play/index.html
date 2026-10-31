@@ -65,12 +65,18 @@
             <div class="chart" id="chartByType"></div>
           </article>
           <article class="card">
+            <header class="card-h"><h3>Vitesse moyenne par coup</h3><button class="link" data-table="speed">Tableau</button></header>
+            <p class="muted small">En km/h : vitesse de balle pour le service, vitesse de la raquette pour les autres coups.</p>
+            <div class="chart" id="chartSpeed"></div>
+          </article>
+          <article class="card span2">
+            <header class="card-h"><h3>Évolution de la vitesse moyenne</h3><button class="link" data-table="trend">Tableau</button></header>
+            <div class="legend" id="legendTrend"></div>
+            <div class="chart" id="chartTrend"></div>
+          </article>
+          <article class="card" id="impactCard">
             <header class="card-h"><h3>Zone d'impact sur le tamis</h3><button class="link" data-table="impact">Tableau</button></header>
             <div class="chart chart-impact" id="chartImpact"></div>
-          </article>
-          <article class="card">
-            <header class="card-h"><h3>Puissance moyenne par coup</h3><button class="link" data-table="power">Tableau</button></header>
-            <div class="chart" id="chartPower"></div>
           </article>
           <article class="card span2">
             <header class="card-h"><h3>Effets (lifté / plat / slicé)</h3><button class="link" data-table="spin">Tableau</button></header>
@@ -94,13 +100,26 @@
 
     <!-- ============ RAQUETTE ============ -->
     <section id="view-racket" class="view">
-      <div id="bleUnsupported" class="card warn" hidden>
-        <h3>Bluetooth non disponible dans ce navigateur</h3>
-        <p id="bleUnsupportedMsg"></p>
-      </div>
+      <article class="card">
+        <h3>Importer depuis la raquette (câble USB)</h3>
+        <p>Branchée en USB, la raquette apparaît comme une clé USB nommée <b>BABOLAT</b>. Elle contient des fichiers
+           <code>LOG000.BIN</code>, <code>LOG001.BIN</code>… avec toutes tes séances.</p>
+        <ol class="steps muted">
+          <li>Branche la raquette au téléphone ou à l'ordinateur avec un câble USB qui transmet les données
+              (sur téléphone, il faut en général un adaptateur USB-C ou Lightning).</li>
+          <li>Appuie sur un des boutons ci-dessous et sélectionne <b>tous</b> les fichiers <code>LOG…BIN</code> dans BABOLAT.</li>
+        </ol>
+        <div class="row wrap">
+          <label class="btn file">Choisir les fichiers LOG<input type="file" id="logFiles" multiple hidden></label>
+          <label class="btn ghost file" id="logDirBtn">Choisir le dossier BABOLAT<input type="file" id="logDir" webkitdirectory multiple hidden></label>
+        </div>
+        <p class="muted small">Les fichiers sont seulement lus, jamais modifiés. Tu peux réimporter les mêmes fichiers sans créer de doublons.</p>
+        <p id="usbResult" class="small" hidden></p>
+      </article>
 
       <article class="card">
-        <h3>Connexion</h3>
+        <h3>Connexion Bluetooth (expérimental)</h3>
+        <p id="bleUnsupported" class="small muted" hidden>Bluetooth indisponible ici : <span id="bleUnsupportedMsg"></span></p>
         <p class="muted">Allume la raquette (appui sur le bouton du manche, la LED s'allume), puis appuie sur « Rechercher ».
            Choisis l'appareil dans la liste qui s'affiche.</p>
         <div class="row wrap">
@@ -179,22 +198,18 @@
           <label>Coup droit<input type="number" name="s_forehand" min="0" value="0"></label>
           <label>Revers<input type="number" name="s_backhand" min="0" value="0"></label>
           <label>Service<input type="number" name="s_serve" min="0" value="0"></label>
+          <label>Volée<input type="number" name="s_volley" min="0" value="0"></label>
           <label>Smash<input type="number" name="s_smash" min="0" value="0"></label>
         </div>
       </fieldset>
       <fieldset>
-        <legend>Puissance moyenne (indice 0–100)</legend>
+        <legend>Vitesse moyenne (km/h)</legend>
         <div class="form-grid four">
-          <label>Coup droit<input type="number" name="p_forehand" min="0" max="100"></label>
-          <label>Revers<input type="number" name="p_backhand" min="0" max="100"></label>
-          <label>Service<input type="number" name="p_serve" min="0" max="100"></label>
-          <label>Smash<input type="number" name="p_smash" min="0" max="100"></label>
-        </div>
-      </fieldset>
-      <fieldset>
-        <legend>Centrage</legend>
-        <div class="form-grid">
-          <label>% de coups dans le sweet spot<input type="number" name="sweetSpotPct" min="0" max="100"></label>
+          <label>Coup droit<input type="number" name="v_forehand" min="0" max="300" step="0.1"></label>
+          <label>Revers<input type="number" name="v_backhand" min="0" max="300" step="0.1"></label>
+          <label>Service<input type="number" name="v_serve" min="0" max="300" step="0.1"></label>
+          <label>Volée<input type="number" name="v_volley" min="0" max="300" step="0.1"></label>
+          <label>Smash<input type="number" name="v_smash" min="0" max="300" step="0.1"></label>
         </div>
       </fieldset>
       <label>Notes<textarea name="notes" rows="2"></textarea></label>
@@ -202,6 +217,37 @@
         <button class="btn ghost" value="cancel" formnovalidate>Annuler</button>
         <button class="btn" value="save">Enregistrer</button>
       </div>
+    </form>
+  </dialog>
+
+  <!-- Horloge de la raquette réinitialisée -->
+  <dialog id="clockDialog">
+    <form method="dialog" id="clockForm">
+      <h2>Horloge de la raquette à régler</h2>
+      <p>La batterie de la raquette s'est vidée : son horloge est repartie au 1<sup>er</sup> septembre 2012.
+         <span id="clockCount"></span></p>
+      <p>Indique la date et l'heure à laquelle ta <b>dernière séance s'est terminée</b>. L'appli en déduit le décalage
+         et corrige toutes les séances concernées.</p>
+      <label>Fin de la dernière séance<input type="datetime-local" name="lastEnded" required></label>
+      <div class="row end">
+        <button class="btn ghost" value="cancel" formnovalidate>Plus tard</button>
+        <button class="btn" value="save">Corriger les dates</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Détail d'une séance -->
+  <dialog id="detailDialog" class="wide">
+    <form method="dialog">
+      <h2 id="detailTitle"></h2>
+      <p class="muted" id="detailMeta"></p>
+      <div class="table-wrap" id="detailTable"></div>
+      <div id="detailTimelineBox">
+        <h3 class="mt">Coups par tranche de 5 minutes</h3>
+        <div class="legend" id="detailLegend"></div>
+        <div class="chart" id="detailTimeline"></div>
+      </div>
+      <div class="row end"><button class="btn">Fermer</button></div>
     </form>
   </dialog>
 

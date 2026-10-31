@@ -4,7 +4,8 @@ export const STROKES = [
   { key: 'forehand', label: 'Coup droit', color: 'var(--s1)' },
   { key: 'backhand', label: 'Revers', color: 'var(--s2)' },
   { key: 'serve', label: 'Service', color: 'var(--s3)' },
-  { key: 'smash', label: 'Smash', color: 'var(--s4)' },
+  { key: 'volley', label: 'Volée', color: 'var(--s4)' },
+  { key: 'smash', label: 'Smash', color: 'var(--s5)' },
 ];
 
 export const SPINS = [
@@ -40,10 +41,12 @@ function safeSet(key, value) {
  * {
  *   id, date (ISO), source: 'manual' | 'import' | 'racket' | 'demo',
  *   durationMin, activeMin, longestRally,
- *   strokes: { forehand, backhand, serve, smash },
- *   power:   { forehand, backhand, serve, smash }   // indice 0-100
- *   spin:    { forehand: {topspin, flat, slice}, backhand: {...}, serve: {...} },
- *   impact:  [9 entiers]  // grille 3x3 du tamis, ligne par ligne depuis le haut
+ *   strokes:  { forehand, backhand, serve, volley, smash },
+ *   speed:    { forehand, ... }   // vitesse moyenne en km/h (balle pour le service, raquette sinon)
+ *   maxSpeed: { forehand, ... }   // vitesse maximale en km/h
+ *   spin:     { forehand: {topspin, flat, slice}, backhand: {...}, ... },
+ *   swings:   [[t (s), coup (index STROKES), effet (0 plat, 1 lifté, 2 slicé, -1 ?), km/h, bug d'horloge 0/1], ...]
+ *   impact:   [9 entiers]  // grille 3x3 du tamis (pas encore décodée depuis la raquette)
  *   sweetSpotPct, notes
  * }
  */
@@ -57,7 +60,9 @@ export function normalizeSession(s) {
     activeMin: num(s.activeMin),
     longestRally: num(s.longestRally),
     strokes: {},
-    power: {},
+    speed: {},
+    maxSpeed: {},
+    swings: Array.isArray(s.swings) ? s.swings : null,
     spin: s.spin && typeof s.spin === 'object' ? s.spin : null,
     impact: Array.isArray(s.impact) && s.impact.length === 9 ? s.impact.map((v) => num(v) || 0) : null,
     sweetSpotPct: num(s.sweetSpotPct),
@@ -65,8 +70,10 @@ export function normalizeSession(s) {
   };
   for (const { key } of STROKES) {
     out.strokes[key] = num(s.strokes?.[key]) || 0;
-    const p = num(s.power?.[key]);
-    if (p != null) out.power[key] = p;
+    const v = num(s.speed?.[key]);
+    if (v != null) out.speed[key] = v;
+    const m = num(s.maxSpeed?.[key]);
+    if (m != null) out.maxSpeed[key] = m;
   }
   if (out.sweetSpotPct == null && out.impact) {
     const total = out.impact.reduce((a, b) => a + b, 0);
@@ -93,17 +100,25 @@ export const store = {
     else list.push(session);
     this.saveAll(list);
   },
-  addMany(sessions) {
+  /** Ajoute les séances nouvelles. Avec replace=true, une séance déjà connue est remplacée
+   *  (réimport d'un fichier de la raquette qui a grandi, ou décodage amélioré). */
+  addMany(sessions, { replace = false } = {}) {
     const list = this.sessions();
-    const ids = new Set(list.map((s) => s.id));
-    let added = 0;
+    const index = new Map(list.map((s, i) => [s.id, i]));
+    let added = 0, updated = 0;
     for (const s of sessions) {
-      if (ids.has(s.id)) continue;
+      if (index.has(s.id)) {
+        if (!replace) continue;
+        const old = list[index.get(s.id)];
+        list[index.get(s.id)] = { ...s, notes: old.notes || s.notes };
+        updated++;
+        continue;
+      }
       list.push(s);
       added++;
     }
-    this.saveAll(list);
-    return added;
+    if (!this.saveAll(list)) throw new Error("stockage du téléphone plein ou bloqué");
+    return replace ? { added, updated } : added;
   },
   remove(id) {
     this.saveAll(this.sessions().filter((s) => s.id !== id));
@@ -112,7 +127,7 @@ export const store = {
     this.saveAll(this.sessions().filter((s) => s.source !== source));
   },
   settings() {
-    return safeGet(KEY_SETTINGS, { extraUuids: [], range: 0 });
+    return safeGet(KEY_SETTINGS, { extraUuids: [], range: 0, clock: null });
   },
   saveSettings(patch) {
     safeSet(KEY_SETTINGS, { ...this.settings(), ...patch });
@@ -123,9 +138,9 @@ export const store = {
 
 const CSV_COLUMNS = [
   'date', 'durationMin', 'activeMin', 'longestRally',
-  'forehand', 'backhand', 'serve', 'smash',
-  'power_forehand', 'power_backhand', 'power_serve', 'power_smash',
-  'sweetSpotPct', 'notes',
+  'forehand', 'backhand', 'serve', 'volley', 'smash',
+  'speed_forehand', 'speed_backhand', 'speed_serve', 'speed_volley', 'speed_smash',
+  'max_serve', 'sweetSpotPct', 'notes',
 ];
 
 export function toCsv(sessions) {
@@ -135,9 +150,9 @@ export function toCsv(sessions) {
   };
   const rows = sessions.map((s) => [
     s.date, s.durationMin, s.activeMin, s.longestRally,
-    s.strokes.forehand, s.strokes.backhand, s.strokes.serve, s.strokes.smash,
-    s.power.forehand, s.power.backhand, s.power.serve, s.power.smash,
-    s.sweetSpotPct, s.notes,
+    s.strokes.forehand, s.strokes.backhand, s.strokes.serve, s.strokes.volley, s.strokes.smash,
+    s.speed.forehand, s.speed.backhand, s.speed.serve, s.speed.volley, s.speed.smash,
+    s.maxSpeed.serve, s.sweetSpotPct, s.notes,
   ].map(esc).join(','));
   return [CSV_COLUMNS.join(','), ...rows].join('\n');
 }
@@ -174,8 +189,9 @@ export function fromCsv(text) {
       durationMin: r.durationMin,
       activeMin: r.activeMin,
       longestRally: r.longestRally,
-      strokes: { forehand: r.forehand, backhand: r.backhand, serve: r.serve, smash: r.smash },
-      power: { forehand: r.power_forehand, backhand: r.power_backhand, serve: r.power_serve, smash: r.power_smash },
+      strokes: { forehand: r.forehand, backhand: r.backhand, serve: r.serve, volley: r.volley, smash: r.smash },
+      speed: { forehand: r.speed_forehand, backhand: r.speed_backhand, serve: r.speed_serve, volley: r.speed_volley, smash: r.speed_smash },
+      maxSpeed: { serve: r.max_serve },
       sweetSpotPct: r.sweetSpotPct,
       notes: r.notes,
     });
@@ -205,11 +221,9 @@ export function demoSessions(n = 14) {
       forehand: ri(140, 260),
       backhand: ri(90, 190),
       serve: ri(25, 70),
-      smash: ri(0, 14),
+      volley: ri(10, 50),
+      smash: 0,
     };
-    const impact = [ri(4, 12), ri(10, 22), ri(3, 10), ri(14, 30), 0, ri(12, 28), ri(4, 12), ri(12, 26), ri(3, 9)];
-    const total = Object.values(strokes).reduce((a, b) => a + b, 0);
-    impact[4] = Math.max(0, total - impact.reduce((a, b) => a + b, 0));
     const spinOf = (t) => {
       const top = ri(35, 60), slice = ri(8, 25);
       return { topspin: Math.round(t * top / 100), slice: Math.round(t * slice / 100), flat: t - Math.round(t * top / 100) - Math.round(t * slice / 100) };
@@ -222,14 +236,14 @@ export function demoSessions(n = 14) {
       activeMin: ri(18, 34),
       longestRally: ri(9, 26),
       strokes,
-      power: {
-        forehand: Math.round(ri(55, 68) + prog * 8),
-        backhand: Math.round(ri(45, 60) + prog * 8),
-        serve: Math.round(ri(62, 78) + prog * 6),
-        smash: ri(60, 80),
+      speed: {
+        forehand: Math.round(ri(50, 60) + prog * 6),
+        backhand: Math.round(ri(44, 52) + prog * 6),
+        serve: Math.round(ri(98, 110) + prog * 8),
+        volley: ri(20, 28),
       },
-      spin: { forehand: spinOf(strokes.forehand), backhand: spinOf(strokes.backhand), serve: spinOf(strokes.serve) },
-      impact,
+      maxSpeed: { forehand: ri(85, 98), backhand: ri(68, 80), serve: Math.round(ri(124, 136) + prog * 6), volley: ri(45, 60) },
+      spin: { forehand: spinOf(strokes.forehand), backhand: spinOf(strokes.backhand), serve: spinOf(strokes.serve), volley: spinOf(strokes.volley) },
       notes: 'Séance de démonstration',
     }));
   }
